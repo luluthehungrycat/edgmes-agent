@@ -53,27 +53,23 @@ without modifying upstream runtime behavior.
 
 ### 1. Capability profiles
 
-Add a small, serializable capability model under `edgmes/`:
+**Status:** model capability contracts and pure tool/context resolver complete;
+profile presets and runtime integration remain.
 
-- context and input/output budgets
-- maximum steps and tool calls
-- allowed toolsets/tools
-- retry limits
-- delegation and parallelism policy
-- compression policy
-- verification requirements
+Implemented under `edgmes/capabilities.py`:
 
-Add a pure resolver that maps `(model metadata, task class, configured profile)`
-to a bounded policy. Test this before wiring it into the agent loop.
+- immutable context and input/output budgets;
+- supported capabilities and permitted tools;
+- maximum steps and tool calls;
+- explicit mutation approval policy;
+- fail-closed required-tool/capability handling;
+- optional-tool filtering;
+- deterministic structured policy decisions.
 
-Initial profiles:
-
-```text
-nano          0.3–2B   one-shot/read-only actions
-small         3–4B     short bounded chains
-medium-edge   ~7B      modest coding/troubleshooting workflows
-full          remote/larger models; inherited Hermes behavior
-```
+The resolver is intentionally not wired into the inherited conversation loop yet.
+Initial named presets (`nano`, `small`, `medium-edge`, `full`), retry/delegation/
+parallelism policy, compression policy, and observed model metadata remain part of
+runtime integration work.
 
 ### 2. Bounded context and state ledger
 
