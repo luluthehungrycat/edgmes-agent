@@ -1,9 +1,38 @@
-"""Edgmes Agent: the edge-focused Hermes Agent runtime.
+"""Public Edgmes namespace exports."""
 
-The initial package establishes the downstream namespace without duplicating
-Hermes' runtime. Edge-specific execution policy will be added here behind
-small, deliberate integration seams.
-"""
+from .home import EdgmesHome, HomeConfigurationError
 
-__all__ = ["__version__"]
 __version__ = "0.1.0.dev0"
+from .routing import (
+    FunctionGemmaRouter,
+    KeywordClassifier,
+    KeywordRule,
+    PolicyError,
+    ProfileRegistry,
+    RouteCandidate,
+    RouteDecision,
+    RoutingCoordinator,
+    RoutingError,
+    SpecialistHandoff,
+    SpecialistProfile,
+    UnknownProfileError,
+    parse_route_output,
+)
+
+__all__ = [
+    "EdgmesHome",
+    "FunctionGemmaRouter",
+    "HomeConfigurationError",
+    "KeywordClassifier",
+    "KeywordRule",
+    "PolicyError",
+    "ProfileRegistry",
+    "RouteCandidate",
+    "RouteDecision",
+    "RoutingCoordinator",
+    "RoutingError",
+    "SpecialistHandoff",
+    "SpecialistProfile",
+    "UnknownProfileError",
+    "parse_route_output",
+]
