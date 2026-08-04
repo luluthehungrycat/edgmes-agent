@@ -90,6 +90,7 @@ def test_local_router_uses_compact_catalog_and_handoff_is_bounded() -> None:
     assert handoff.tools == ("read_file", "write_file")
     assert len(seen[0]) == 2
     assert all("tools" not in profile for profile in seen[0])
+    assert "unrelated_transcript" not in handoff.state
     assert handoff.user_request == "Please improve the README"
 
 
@@ -143,7 +144,8 @@ def test_router_cannot_expand_capabilities_or_mutate_through_readonly_profile() 
         ),
     )
     decision = coordinator.route("do something", requires_mutation=True)
-    assert decision.status == "unresolved"
+    assert decision.status == "rejected"
+    assert "lacks capabilities" in decision.reason
 
 
 def test_explicit_profile_can_be_mutating_when_allowed() -> None:

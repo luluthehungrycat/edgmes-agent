@@ -118,7 +118,15 @@ class SpecialistHandoff:
     routing: Mapping[str, object]
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "state", MappingProxyType(dict(self.state)))
+        safe_state = {
+            key: value
+            for key, value in self.state.items()
+            if not any(
+                marker in key.casefold()
+                for marker in ("transcript", "raw_history", "tool_results", "messages")
+            )
+        }
+        object.__setattr__(self, "state", MappingProxyType(safe_state))
         object.__setattr__(self, "routing", MappingProxyType(dict(self.routing)))
 
 
@@ -311,6 +319,21 @@ class RoutingCoordinator:
                 }
             )
 
+    def _rejected(
+        self, candidate: RouteCandidate, reason: str, candidates: list[str]
+    ) -> RouteDecision:
+        decision = RouteDecision(
+            status="rejected",
+            source=candidate.source,
+            profile_id=candidate.profile_id,
+            confidence=candidate.confidence,
+            reason=reason,
+            candidates=tuple(candidates),
+            escalated=candidate.source == "escalation",
+        )
+        self._audit(decision)
+        return decision
+
     def route(
         self,
         request: str,
@@ -353,38 +376,46 @@ class RoutingCoordinator:
                 candidate = parse_route_output(
                     self.local_router.route(request, catalog), source="local"
                 )
+            except (RoutingError, TypeError, ValueError):
+                candidate = None
+            if candidate is not None:
                 candidates.append(candidate.profile_id)
                 if candidate.confidence >= self.threshold:
-                    profile = self._validate(
-                        candidate,
-                        required_capabilities=required,
-                        requires_mutation=requires_mutation,
-                        explicit=False,
-                        high_risk_approved=False,
-                    )
+                    try:
+                        profile = self._validate(
+                            candidate,
+                            required_capabilities=required,
+                            requires_mutation=requires_mutation,
+                            explicit=False,
+                            high_risk_approved=False,
+                        )
+                    except (RoutingError, PolicyError) as exc:
+                        return self._rejected(candidate, str(exc), candidates)
                     return self._selected(candidate, profile, candidates=candidates)
-            except (RoutingError, TypeError, ValueError):
-                pass
 
         if self.escalation is not None:
             try:
                 candidate = parse_route_output(
                     self.escalation(request, catalog), source="escalation"
                 )
+            except (RoutingError, TypeError, ValueError):
+                candidate = None
+            if candidate is not None:
                 candidates.append(candidate.profile_id)
                 if candidate.confidence >= self.threshold:
-                    profile = self._validate(
-                        candidate,
-                        required_capabilities=required,
-                        requires_mutation=requires_mutation,
-                        explicit=False,
-                        high_risk_approved=False,
-                    )
+                    try:
+                        profile = self._validate(
+                            candidate,
+                            required_capabilities=required,
+                            requires_mutation=requires_mutation,
+                            explicit=False,
+                            high_risk_approved=False,
+                        )
+                    except (RoutingError, PolicyError) as exc:
+                        return self._rejected(candidate, str(exc), candidates)
                     return self._selected(
                         candidate, profile, candidates=candidates, escalated=True
                     )
-            except (RoutingError, TypeError, ValueError):
-                pass
 
         decision = RouteDecision(
             status="unresolved",
