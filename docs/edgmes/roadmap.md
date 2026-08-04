@@ -73,18 +73,21 @@ runtime integration work.
 
 ### 2. Bounded context and state ledger
 
-Use the existing context-engine seam where possible. Add Edgmes interfaces for:
+**Status:** structured ledger and deterministic bounded selector complete;
+edge-runtime integration remains.
 
-- identity and durable user facts
-- current goal and constraints
-- relevant evidence
-- completed and failed actions
-- changed artifacts
-- verification state
-- next recommended action
+Implemented under `edgmes/ledger.py`:
 
-The raw transcript remains persisted; the model receives a bounded projection.
-Add deterministic compaction before auxiliary-model summarization.
+- immutable continuity entries for goals, constraints, evidence, actions,
+  artifacts, verification, and next actions;
+- transcript/secret rejection at the ledger boundary;
+- immutable ledger snapshots;
+- deterministic priority/verification/recency ranking;
+- whole-entry greedy packing under a character budget;
+- mandatory current-request handling and omission reporting.
+
+Raw Hermes transcript persistence remains untouched. Tokenizer-aware budgeting,
+deterministic compaction, and runtime integration remain next-stage work.
 
 ### 3. Edge tool policy and runtime
 

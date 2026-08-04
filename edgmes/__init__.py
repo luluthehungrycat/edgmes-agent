@@ -1,6 +1,14 @@
 """Public Edgmes namespace exports."""
 
 from .home import EdgmesHome, HomeConfigurationError
+from .ledger import (
+    ContextBudgetError,
+    ContextProjection,
+    LedgerEntry,
+    LedgerError,
+    StateLedger,
+    select_bounded_context,
+)
 from .capabilities import (
     CapabilityProfileError,
     CapabilityProfileRegistry,
@@ -30,6 +38,12 @@ from .routing import (
 
 __all__ = [
     "EdgmesHome",
+    "ContextBudgetError",
+    "ContextProjection",
+    "LedgerEntry",
+    "LedgerError",
+    "StateLedger",
+    "select_bounded_context",
     "CapabilityProfileError",
     "CapabilityProfileRegistry",
     "ModelCapabilityProfile",
