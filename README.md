@@ -3,6 +3,8 @@
 </p>
 
 # Hermes Agent ☤
+
+> **Downstream note:** This repository is the foundation for **Hermes Agent Edge**, the edge-focused Edgmes Agent runtime. See [`README_EDGMES.md`](README_EDGMES.md) and [`docs/edgmes/`](docs/edgmes/) for the downstream project scope. The upstream Hermes documentation below remains applicable to the inherited runtime until Edgmes-specific behavior is implemented.
 <p align="center">
   <a href="https://hermes-agent.nousresearch.com/">Hermes Agent</a> | <a href="https://hermes-agent.nousresearch.com/">Hermes Desktop</a>
 </p>
