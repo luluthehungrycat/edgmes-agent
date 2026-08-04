@@ -91,8 +91,7 @@ deterministic compaction, and runtime integration remain next-stage work.
 
 ### 3. Edge tool policy and runtime
 
-**Status:** bounded one-shot runtime implemented; live local-model acceptance is
-blocked on host memory.
+**Status:** bounded one-shot runtime and real local-model smoke complete.
 
 Implemented under `edgmes/runtime.py`:
 
@@ -103,10 +102,12 @@ Implemented under `edgmes/runtime.py`:
 - bounded ledger projection and immutable completion/verification updates;
 - no executable tools or mutation authority in the edge profile.
 
-The smallest suitable installed model is a 1.9B Qwen3.5 Q8 model, but Ollama
-reports it requires 2.9 GiB available memory while this host currently exposes
-2.8 GiB and no swap. The live smoke task must be rerun after adding memory/swap
-or using a genuinely smaller compatible model; no larger-model fallback is used.
+A real Ollama smoke task completed with the 268.10M-parameter `functiongemma`
+model (300 MB, 32K context). It returned a non-empty response and produced
+three ledger entries. FunctionGemma is intentionally treated as a router/action
+model; the smoke result does not establish it as a primary conversational model.
+The previously attempted 1.9B Qwen3.5 model remains too large for this host and
+was not used as a fallback.
 
 ### 4. Verification benchmark
 

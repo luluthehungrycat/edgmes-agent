@@ -1,9 +1,8 @@
+# edge-runtime Specification
+
 ## Purpose
-
 Executes bounded Edgmes turns against an injected local chat backend while enforcing model capability limits, compact context selection, immutable state updates, and explicit verification metadata.
-
-## ADDED Requirements
-
+## Requirements
 ### Requirement: Runtime resolves policy before backend access
 
 The runtime SHALL resolve the selected model capability profile and SHALL reject a request before calling the backend when its context, output, step, or tool requirements exceed policy.
@@ -39,3 +38,4 @@ The Ollama backend SHALL use an explicit base URL, model, non-streaming chat req
 #### Scenario: Local endpoint responds
 - **WHEN** the configured Ollama endpoint returns valid chat JSON
 - **THEN** the backend SHALL return normalized response text and usage/evidence metadata
+
