@@ -38,6 +38,15 @@ from .routing import (
 
 __all__ = [
     "EdgmesHome",
+    "BackendResponse",
+    "BackendTransportError",
+    "EdgeRuntime",
+    "EdgeRuntimeError",
+    "OllamaBackend",
+    "RuntimePolicyError",
+    "RuntimeRequest",
+    "RuntimeResult",
+    "default_edge_profile",
     "ContextBudgetError",
     "ContextProjection",
     "LedgerEntry",
@@ -66,3 +75,23 @@ __all__ = [
     "UnknownProfileError",
     "parse_route_output",
 ]
+
+_RUNTIME_EXPORTS = frozenset({
+    "BackendResponse",
+    "BackendTransportError",
+    "EdgeRuntime",
+    "EdgeRuntimeError",
+    "OllamaBackend",
+    "RuntimePolicyError",
+    "RuntimeRequest",
+    "RuntimeResult",
+    "default_edge_profile",
+})
+
+
+def __getattr__(name: str):
+    if name in _RUNTIME_EXPORTS:
+        from . import runtime
+
+        return getattr(runtime, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

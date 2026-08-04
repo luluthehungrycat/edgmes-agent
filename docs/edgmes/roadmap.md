@@ -91,20 +91,23 @@ deterministic compaction, and runtime integration remain next-stage work.
 
 ### 3. Edge tool policy and runtime
 
-Add lazy, policy-driven tool construction. The edge runtime should initially
-prefer a small set such as:
+**Status:** bounded one-shot runtime and real local-model smoke complete.
 
-- `read_file`
-- `search_files`
-- `write_file`
-- `patch`
-- `terminal`
-- `process`
+Implemented under `edgmes/runtime.py`:
 
-Delegation, MCP, browser/computer use, cron, media, and broad plugin discovery
-remain disabled by default in edge profiles.
+- provider-neutral injected `ChatBackend` protocol;
+- dependency-free non-streaming Ollama adapter;
+- one-shot `python -m edgmes.runtime` CLI;
+- policy-before-backend enforcement;
+- bounded ledger projection and immutable completion/verification updates;
+- no executable tools or mutation authority in the edge profile.
 
-Add an explicit `edgmes` entry point only once the policy can run one real task.
+A real Ollama smoke task completed with the 268.10M-parameter `functiongemma`
+model (300 MB, 32K context). It returned a non-empty response and produced
+three ledger entries. FunctionGemma is intentionally treated as a router/action
+model; the smoke result does not establish it as a primary conversational model.
+The previously attempted 1.9B Qwen3.5 model remains too large for this host and
+was not used as a fallback.
 
 ### 4. Verification benchmark
 
