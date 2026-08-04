@@ -125,14 +125,23 @@ verification, latency, and destructive-action avoidance.
 
 ### 5. Packaging and synchronization
 
-Only after the runtime boundary is stable:
+**Status:** package boundary, installed `edgmes` entry point, upstream delta
+classification, PR-producing sync automation, and path-scoped edge CI are
+implemented.
 
-- split edge/full dependency extras
-- add clean editable installation checks
-- add an edge package manifest and forbidden-import test
-- automate upstream-sync PR creation
-- classify protected runtime changes
-- run edge smoke tests and dependency audits in CI
+Implemented:
+
+- setuptools discovery for `edgmes` and `edgmes.*`;
+- installed `edgmes` console entry point;
+- `scripts/edgmes/check_boundary.py` forbidden-import/home isolation checks;
+- `scripts/upstream/sync.py` merge-base-aware risk classification and explicit
+  no-direct-merge branch creation;
+- scheduled/manual `.github/workflows/edgmes-upstream-sync.yml`;
+- `.github/workflows/edgmes-edge.yml` focused tests, compilation, lint, and
+  installability checks.
+
+Dependency-extra splitting remains a later packaging optimization; the current
+workflow deliberately preserves the inherited dependency layout.
 
 ## Definition of done for the first usable Edgmes release
 

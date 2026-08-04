@@ -1,0 +1,74 @@
+name: Edgmes Edge Checks
+
+on:
+  workflow_call:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "edgmes/**"
+      - "tests/edgmes/**"
+      - "scripts/edgmes/**"
+      - "scripts/upstream/**"
+      - "docs/edgmes/**"
+      - "pyproject.toml"
+      - ".github/workflows/edgmes-edge.yml"
+  pull_request:
+    paths:
+      - "edgmes/**"
+      - "tests/edgmes/**"
+      - "scripts/edgmes/**"
+      - "scripts/upstream/**"
+      - "docs/edgmes/**"
+      - "pyproject.toml"
+      - ".github/workflows/edgmes-edge.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: edgmes-edge-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  edge:
+    name: Edgmes boundary and focused tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # 8.2.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python 3.11
+        uses: ./.github/actions/retry
+        with:
+          command: uv python install 3.11
+
+      - name: Install edge test environment
+        uses: ./.github/actions/retry
+        with:
+          command: uv sync --locked --python 3.11 --extra dev
+
+      - name: Check installable edge boundary
+        run: uv run python scripts/edgmes/check_boundary.py
+
+      - name: Check edge console entry point
+        run: uv run edgmes --help
+
+      - name: Run focused Edgmes tests
+        run: uv run python -m pytest tests/edgmes -q
+
+      - name: Compile Edgmes sources
+        run: uv run python -m compileall -q edgmes tests/edgmes scripts/edgmes scripts/upstream
+
+      - name: Lint Edgmes sources
+        run: uv run ruff check edgmes tests/edgmes scripts/edgmes scripts/upstream

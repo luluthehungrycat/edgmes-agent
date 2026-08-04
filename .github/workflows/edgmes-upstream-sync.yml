@@ -1,0 +1,78 @@
+name: Edgmes Upstream Sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: edgmes-upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Create upstream sync PR
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout downstream history
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Configure merge identity
+        run: |
+          git config user.name "edgmes-sync[bot]"
+          git config user.email "edgmes-sync[bot]@users.noreply.github.com"
+
+      - name: Fetch official upstream
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch --no-tags upstream main
+
+      - name: Classify upstream delta
+        id: plan
+        run: |
+          python3 scripts/upstream/sync.py --json > "$RUNNER_TEMP/upstream-plan.json"
+          cat "$RUNNER_TEMP/upstream-plan.json"
+          COUNT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit_count"])' "$RUNNER_TEMP/upstream-plan.json")
+          RISK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["risk"])' "$RUNNER_TEMP/upstream-plan.json")
+          echo "commit_count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "risk=$RISK" >> "$GITHUB_OUTPUT"
+
+      - name: Stop when already synchronized
+        if: steps.plan.outputs.commit_count == '0'
+        run: echo "Downstream main already contains upstream main."
+
+      - name: Create synchronization branch
+        if: steps.plan.outputs.commit_count != '0'
+        run: |
+          BRANCH="sync/upstream-$(date -u +%F)"
+          export BRANCH
+          python3 scripts/upstream/sync.py --create-branch --branch "$BRANCH"
+          python3 scripts/edgmes/check_boundary.py
+          python3 -m pytest tests/edgmes -q
+          git push origin "HEAD:$BRANCH"
+          {
+            echo "## Upstream synchronization"
+            echo
+            echo "- upstream commits: ${{ steps.plan.outputs.commit_count }}"
+            echo "- classified risk: ${{ steps.plan.outputs.risk }}"
+            echo "- branch: \\`$BRANCH\\`"
+            echo
+            echo "This PR was created by automation. Review protected runtime, prompt, tool, state, and security paths before merging."
+          } > "$RUNNER_TEMP/pr-body.md"
+          EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json url --jq '.[0].url')
+          if [ -n "$EXISTING" ]; then
+            echo "Existing PR: $EXISTING"
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+              --title "chore(sync): update from upstream Hermes" \
+              --body-file "$RUNNER_TEMP/pr-body.md"
+          fi
+        env:
+          GH_TOKEN: ${{ github.token }}
