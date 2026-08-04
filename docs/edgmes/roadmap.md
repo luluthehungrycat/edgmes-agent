@@ -26,20 +26,30 @@ memory, sessions, approvals, and persistence.
 
 ### 0. Baseline and contract
 
-**Status:** namespace and documentation scaffold complete.
+**Status:** baseline harness complete; runtime contract work continues.
 
-Next, measure the inherited runtime before optimizing it:
+The reproducible harness is `scripts/benchmarks/baseline_harness.py` and its
+usage is documented in `docs/edgmes/baseline-harness.md`. It measures the
+inherited runtime without provider calls or repository mutation:
 
 - process/import startup time
-- provider/model initialization time
 - tool discovery and construction time
-- system-prompt assembly time and token/character size
-- skill-index and memory assembly cost
-- first-token latency
-- tool-call latency and result size
-- context-compression behavior
+- system-prompt assembly time and character size
+- one representative read-only task
 
-The baseline must run without modifying upstream runtime behavior.
+A three-iteration run on the development host recorded these medians:
+
+```text
+run_agent import:             1102 ms
+prompt assembly subprocess:    222 ms / 18,827 chars
+built-in tool construction:    725 ms / 36 modules / 81 tools
+read-only task subprocess:      42 ms
+```
+
+These are preparation baselines, not model-quality or first-token benchmarks.
+Provider/model initialization, first-token latency, tool-call latency, and
+context-compression behavior remain later benchmark work. The baseline must run
+without modifying upstream runtime behavior.
 
 ### 1. Capability profiles
 
