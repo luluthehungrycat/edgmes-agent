@@ -23,6 +23,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Configure merge identity
         run: |
@@ -48,15 +49,17 @@ jobs:
         if: steps.plan.outputs.commit_count == '0'
         run: echo "Downstream main already contains upstream main."
 
-      - name: Create synchronization branch
+      - name: Create and validate synchronization branch
+        id: branch
         if: steps.plan.outputs.commit_count != '0'
         run: |
-          BRANCH="sync/upstream-$(date -u +%F)"
+          # Include the workflow run number so independent runs on the same
+          # day cannot collide. Reruns remain idempotent in the publish step.
+          BRANCH="sync/upstream-$(date -u +%F)-run-${GITHUB_RUN_NUMBER}"
           export BRANCH
           python3 scripts/upstream/sync.py --create-branch --branch "$BRANCH"
           python3 scripts/edgmes/check_boundary.py
           python3 -m pytest tests/edgmes -q
-          git push origin "HEAD:$BRANCH"
           {
             echo "## Upstream synchronization"
             echo
@@ -66,6 +69,27 @@ jobs:
             echo
             echo "This PR was created by automation. Review protected runtime, prompt, tool, state, and security paths before merging."
           } > "$RUNNER_TEMP/pr-body.md"
+          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Publish synchronization branch and PR
+        if: steps.plan.outputs.commit_count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          BRANCH="${{ steps.branch.outputs.branch }}"
+          SHA=$(git rev-parse HEAD)
+
+          # Keep the write-capable token out of the merge, boundary-check, and
+          # test step above. The API call creates the ref without configuring
+          # a persistent git credential in the checkout.
+          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
+            echo "Existing synchronization branch: $BRANCH"
+          else
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f "ref=refs/heads/$BRANCH" \
+              -f "sha=$SHA"
+          fi
+
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json url --jq '.[0].url')
           if [ -n "$EXISTING" ]; then
             echo "Existing PR: $EXISTING"
@@ -74,5 +98,3 @@ jobs:
               --title "chore(sync): update from upstream Hermes" \
               --body-file "$RUNNER_TEMP/pr-body.md"
           fi
-        env:
-          GH_TOKEN: ${{ github.token }}

@@ -13,11 +13,11 @@ The sync helper MUST compare the merge base of downstream `main` and `upstream/m
 
 ### Requirement: synchronization requires a topic branch and PR
 
-The automation MUST create a `sync/upstream-YYYY-MM-DD` branch and MUST NOT merge directly into downstream `main`.
+The automation MUST create a `sync/upstream-YYYY-MM-DD-run-N` branch and MUST NOT merge directly into downstream `main`.
 
 #### Scenario: scheduled sync
 - **WHEN** a scheduled sync finds upstream changes
-- **THEN** it pushes the sync branch and opens or updates a PR targeting `main`
+- **THEN** it publishes the sync branch and opens or updates a PR targeting `main`
 
 #### Scenario: merge conflict
 - **WHEN** the upstream merge conflicts

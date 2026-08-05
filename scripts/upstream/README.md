@@ -27,15 +27,16 @@ python3 scripts/upstream/sync.py \
 
 The command requires a clean working tree and uses `git merge --no-ff`. A
 conflict stops the operation; resolve and verify it manually before pushing.
-Never merge directly into `main`. Open a PR from the `sync/upstream-YYYY-MM-DD`
-branch and review high-risk paths explicitly.
+Never merge directly into `main`. Open a PR from the
+`sync/upstream-YYYY-MM-DD-run-N` branch and review high-risk paths explicitly.
 
 ## Automation
 
 `.github/workflows/edgmes-upstream-sync.yml` runs weekly and on manual dispatch.
-It fetches the official upstream, classifies the delta, creates a date-named
-sync branch, runs Edgmes boundary/focused tests, pushes the branch, and opens a
-PR. It has no direct `main` merge step.
+It fetches the official upstream, classifies the delta, creates a run-unique
+sync branch, runs Edgmes boundary/focused tests without a write token, then
+publishes the already-validated commit and opens a PR. It has no direct `main`
+merge step.
 
 `.github/workflows/edgmes-edge.yml` runs on Edgmes/package changes and checks:
 
