@@ -31,3 +31,21 @@ def test_classify_paths_keeps_docs_only_delta_normal() -> None:
 
     assert protected == ()
     assert risk == "normal"
+
+
+def test_create_branch_starts_from_configured_base(monkeypatch, tmp_path: Path) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def fake_git(root: Path, *args: str) -> str:
+        calls.append(args)
+        return ""
+
+    monkeypatch.setattr(MODULE, "git", fake_git)
+
+    MODULE.create_branch(tmp_path, "upstream/main", "sync/example", "origin/main")
+
+    assert calls == [
+        ("status", "--porcelain"),
+        ("switch", "-c", "sync/example", "origin/main"),
+        ("merge", "--no-ff", "upstream/main", "-m", "chore(sync): merge upstream/main into Edgmes"),
+    ]

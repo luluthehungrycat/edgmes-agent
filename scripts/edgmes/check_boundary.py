@@ -9,7 +9,32 @@ from pathlib import Path
 import sys
 
 FORBIDDEN_TOP_LEVEL = frozenset(
-    {"agent", "tools", "gateway", "plugins", "providers", "hermes_cli", "run_agent"}
+    {
+        "agent",
+        "tools",
+        "gateway",
+        "plugins",
+        "providers",
+        "hermes_cli",
+        "run_agent",
+        "model_tools",
+        "toolsets",
+        "batch_runner",
+        "trajectory_compressor",
+        "toolset_distributions",
+        "cli",
+        "hermes_bootstrap",
+        "hermes_constants",
+        "hermes_state",
+        "hermes_state_common",
+        "hermes_state_portability",
+        "hermes_state_schema",
+        "hermes_state_search",
+        "hermes_time",
+        "hermes_logging",
+        "utils",
+        "mcp_serve",
+    }
 )
 FORBIDDEN_HOME_MARKERS = (".hermes", "HERMES_HOME")
 

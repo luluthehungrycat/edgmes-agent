@@ -65,11 +65,11 @@ def plan(root: Path, base: str = "origin/main", target: str = "upstream/main") -
     return SyncPlan(base, target, merge_base, commit_count, changed, protected, risk)
 
 
-def create_branch(root: Path, target: str, branch: str) -> None:
+def create_branch(root: Path, target: str, branch: str, base: str = "origin/main") -> None:
     status = git(root, "status", "--porcelain")
     if status:
         raise RuntimeError("working tree must be clean before creating an upstream sync branch")
-    git(root, "switch", "-c", branch)
+    git(root, "switch", "-c", branch, base)
     git(root, "merge", "--no-ff", target, "-m", f"chore(sync): merge {target} into Edgmes")
 
 
@@ -87,7 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.create_branch:
         if result.commit_count == 0:
             raise SystemExit("upstream is already synchronized")
-        create_branch(root, args.target, args.branch)
+        create_branch(root, args.target, args.branch, args.base)
     if args.as_json:
         print(json.dumps(result.as_dict(), sort_keys=True))
     else:
