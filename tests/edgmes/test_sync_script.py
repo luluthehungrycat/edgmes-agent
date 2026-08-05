@@ -13,10 +13,16 @@ SPEC.loader.exec_module(MODULE)
 
 def test_classify_paths_marks_inherited_runtime_as_high_risk() -> None:
     protected, risk = MODULE.classify_paths(
-        ["agent/conversation_loop.py", "docs/README.md", "new-file.py"]
+        [
+            "agent/conversation_loop.py",
+            "model_tools.py",
+            "toolsets.py",
+            "docs/README.md",
+            "new-file.py",
+        ]
     )
 
-    assert protected == ("agent/conversation_loop.py",)
+    assert protected == ("agent/conversation_loop.py", "model_tools.py", "toolsets.py")
     assert risk == "high"
 
 

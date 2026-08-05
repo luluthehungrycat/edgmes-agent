@@ -65,7 +65,7 @@ jobs:
         run: uv run edgmes --help
 
       - name: Run focused Edgmes tests
-        run: uv run python -m pytest tests/edgmes -q
+        run: scripts/run_tests.sh tests/edgmes/
 
       - name: Compile Edgmes sources
         run: uv run python -m compileall -q edgmes tests/edgmes scripts/edgmes scripts/upstream

@@ -35,10 +35,29 @@ jobs:
           git remote add upstream https://github.com/NousResearch/hermes-agent.git
           git fetch --no-tags upstream main
 
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # 8.2.0
+        with:
+          version: "0.9.28"
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Set up Python 3.11
+        uses: ./.github/actions/retry
+        with:
+          command: uv python install 3.11
+
+      - name: Install sync test environment
+        uses: ./.github/actions/retry
+        with:
+          command: uv sync --locked --python 3.11 --extra dev
+
       - name: Classify upstream delta
         id: plan
         run: |
-          python3 scripts/upstream/sync.py --json > "$RUNNER_TEMP/upstream-plan.json"
+          uv run python scripts/upstream/sync.py --json > "$RUNNER_TEMP/upstream-plan.json"
           cat "$RUNNER_TEMP/upstream-plan.json"
           COUNT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit_count"])' "$RUNNER_TEMP/upstream-plan.json")
           RISK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["risk"])' "$RUNNER_TEMP/upstream-plan.json")
@@ -57,9 +76,9 @@ jobs:
           # day cannot collide. Reruns remain idempotent in the publish step.
           BRANCH="sync/upstream-$(date -u +%F)-run-${GITHUB_RUN_NUMBER}"
           export BRANCH
-          python3 scripts/upstream/sync.py --create-branch --branch "$BRANCH"
-          python3 scripts/edgmes/check_boundary.py
-          python3 -m pytest tests/edgmes -q
+          uv run python scripts/upstream/sync.py --create-branch --branch "$BRANCH"
+          uv run python scripts/edgmes/check_boundary.py
+          scripts/run_tests.sh tests/edgmes/
           {
             echo "## Upstream synchronization"
             echo
@@ -77,17 +96,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
-          SHA=$(git rev-parse HEAD)
 
           # Keep the write-capable token out of the merge, boundary-check, and
-          # test step above. The API call creates the ref without configuring
-          # a persistent git credential in the checkout.
+          # test step above. This publication step is the only place that can
+          # upload the validated merge commit and create/update the PR.
           if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
             echo "Existing synchronization branch: $BRANCH"
           else
-            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
-              -f "ref=refs/heads/$BRANCH" \
-              -f "sha=$SHA"
+            # The merge commit was created locally during validation. Unlike
+            # the refs API, git push uploads the commit object before creating
+            # the remote branch ref.
+            git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+              push "https://github.com/$GITHUB_REPOSITORY.git" "HEAD:$BRANCH"
           fi
 
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json url --jq '.[0].url')

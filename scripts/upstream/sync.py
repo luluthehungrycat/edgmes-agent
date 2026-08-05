@@ -18,6 +18,8 @@ PROTECTED_PREFIXES = (
     "plugins/",
     "providers/",
     "run_agent.py",
+    "model_tools.py",
+    "toolsets.py",
     "prompt",
     "context",
     "hermes_state",
