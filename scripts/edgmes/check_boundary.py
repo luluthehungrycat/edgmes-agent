@@ -7,8 +7,9 @@ import argparse
 import ast
 from pathlib import Path
 import sys
+import tomllib
 
-FORBIDDEN_TOP_LEVEL = frozenset(
+FORBIDDEN_ROOT_MODULES = frozenset(
     {
         "agent",
         "tools",
@@ -48,6 +49,15 @@ def check(root: Path) -> list[str]:
     if not manifest.is_file():
         return [f"missing package manifest: {manifest}"]
     manifest_text = manifest.read_text(encoding="utf-8")
+    manifest_data = tomllib.loads(manifest_text)
+    package_find = manifest_data.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
+    included_packages = package_find.get("include", [])
+    forbidden_top_level = set(FORBIDDEN_ROOT_MODULES)
+    forbidden_top_level.update(
+        pattern.split(".", 1)[0]
+        for pattern in included_packages
+        if pattern and pattern.split(".", 1)[0] != "edgmes"
+    )
     if '"edgmes"' not in manifest_text or '"edgmes.*"' not in manifest_text:
         errors.append("pyproject.toml does not include edgmes package discovery")
     if "edgmes = \"edgmes.runtime:_main\"" not in manifest_text:
@@ -68,12 +78,12 @@ def check(root: Path) -> list[str]:
                 for alias in node.names:
                     module = alias.name
                     top = module.split(".", 1)[0]
-                    if top in FORBIDDEN_TOP_LEVEL:
+                    if top in forbidden_top_level:
                         errors.append(f"{path.relative_to(root)} imports forbidden upstream namespace {module}")
             elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
                 module = node.module
                 top = module.split(".", 1)[0]
-                if top in FORBIDDEN_TOP_LEVEL:
+                if top in forbidden_top_level:
                     errors.append(f"{path.relative_to(root)} imports forbidden upstream namespace {module}")
     return errors
 

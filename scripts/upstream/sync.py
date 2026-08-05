@@ -20,6 +20,8 @@ PROTECTED_PREFIXES = (
     "run_agent.py",
     "model_tools.py",
     "toolsets.py",
+    "pyproject.toml",
+    "uv.lock",
     "prompt",
     "context",
     "hermes_state",

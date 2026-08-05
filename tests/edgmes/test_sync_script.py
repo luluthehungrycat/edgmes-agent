@@ -49,3 +49,10 @@ def test_create_branch_starts_from_configured_base(monkeypatch, tmp_path: Path) 
         ("switch", "-c", "sync/example", "origin/main"),
         ("merge", "--no-ff", "upstream/main", "-m", "chore(sync): merge upstream/main into Edgmes"),
     ]
+
+
+def test_manifest_and_lockfile_changes_are_protected() -> None:
+    protected, risk = MODULE.classify_paths(["pyproject.toml", "uv.lock"])
+
+    assert protected == ("pyproject.toml", "uv.lock")
+    assert risk == "high"
