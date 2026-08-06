@@ -64,3 +64,15 @@ def test_manifest_and_lockfile_changes_are_protected() -> None:
 
     assert protected == ("pyproject.toml", "uv.lock")
     assert risk == "high"
+
+
+def test_classify_paths_uses_selected_manifest_root(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text(
+        '[tool.setuptools.packages.find]\ninclude = ["edgmes", "edgmes.*", "new_runtime", "new_runtime.*"]\n',
+        encoding="utf-8",
+    )
+
+    protected, risk = MODULE.classify_paths(["new_runtime/auth.py"], tmp_path)
+
+    assert protected == ("new_runtime/auth.py",)
+    assert risk == "high"

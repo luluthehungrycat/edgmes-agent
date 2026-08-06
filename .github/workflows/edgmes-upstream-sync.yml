@@ -141,8 +141,11 @@ jobs:
       - name: Read validated metadata
         id: metadata
         run: |
+          set -euo pipefail
           MERGE_SHA=$(cat "$RUNNER_TEMP/sync-validation/merge-sha")
           BRANCH=$(cat "$RUNNER_TEMP/sync-validation/branch")
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid merge SHA metadata"; exit 1; }
+          [[ "$BRANCH" =~ ^sync/upstream-[0-9]{4}-[0-9]{2}-[0-9]{2}-run-[0-9]+$ ]] || { echo "::error::Invalid branch metadata"; exit 1; }
           {
             echo "merge_sha=$MERGE_SHA"
             echo "branch=$BRANCH"
@@ -164,9 +167,12 @@ jobs:
       - name: Publish validated synchronization branch and PR
         env:
           GH_TOKEN: ${{ steps.publication-token.outputs.token }}
+          BRANCH: ${{ steps.metadata.outputs.branch }}
+          MERGE_SHA: ${{ steps.metadata.outputs.merge_sha }}
         run: |
-          BRANCH="${{ steps.metadata.outputs.branch }}"
-          MERGE_SHA="${{ steps.metadata.outputs.merge_sha }}"
+          set -euo pipefail
+          [[ "$MERGE_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::Invalid merge SHA metadata"; exit 1; }
+          [[ "$BRANCH" =~ ^sync/upstream-[0-9]{4}-[0-9]{2}-[0-9]{2}-run-[0-9]+$ ]] || { echo "::error::Invalid branch metadata"; exit 1; }
           REMOTE_SHA=$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')
           if [ -z "$REMOTE_SHA" ]; then
             git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \

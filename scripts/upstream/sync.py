@@ -82,7 +82,7 @@ def plan(root: Path, base: str = "origin/main", target: str = "upstream/main") -
     commit_count = int(git(root, "rev-list", "--count", f"{merge_base}..{target}") or "0")
     raw = git(root, "diff", "--name-only", "--diff-filter=ACDMRTUXB", merge_base, target)
     changed = tuple(path for path in raw.splitlines() if path)
-    protected, risk = classify_paths(changed)
+    protected, risk = classify_paths(changed, root)
     return SyncPlan(base, target, merge_base, commit_count, changed, protected, risk)
 
 
