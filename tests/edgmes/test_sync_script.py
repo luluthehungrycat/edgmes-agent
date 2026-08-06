@@ -76,3 +76,31 @@ def test_classify_paths_uses_selected_manifest_root(tmp_path: Path) -> None:
 
     assert protected == ("new_runtime/auth.py",)
     assert risk == "high"
+
+
+def test_plan_classifies_both_sides_of_protected_rename(tmp_path: Path) -> None:
+    import subprocess
+
+    def git(*args: str) -> str:
+        return subprocess.check_output(["git", *args], cwd=tmp_path, text=True).strip()
+
+    subprocess.run(["git", "init", "-b", "main", str(tmp_path)], check=True, capture_output=True)
+    git("config", "user.email", "test@example.com")
+    git("config", "user.name", "test")
+    (tmp_path / "tools").mkdir()
+    (tmp_path / "tools/a.py").write_text("print('a')\n", encoding="utf-8")
+    git("add", ".")
+    git("commit", "-m", "base")
+    base = git("rev-parse", "HEAD")
+    git("update-ref", "refs/test/base", base)
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "tools/a.py").rename(tmp_path / "docs/a.md")
+    git("add", ".")
+    git("commit", "-m", "rename")
+    target = git("rev-parse", "HEAD")
+    git("update-ref", "refs/test/target", target)
+
+    plan = MODULE.plan(tmp_path, "refs/test/base", "refs/test/target")
+
+    assert set(plan.changed_paths) == {"tools/a.py", "docs/a.md"}
+    assert plan.risk == "high"

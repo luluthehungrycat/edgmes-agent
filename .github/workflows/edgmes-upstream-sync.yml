@@ -187,7 +187,11 @@ jobs:
 
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json url --jq '.[0].url')
           if [ -n "$EXISTING" ]; then
-            echo "Existing PR: $EXISTING"
+            PR_NUMBER=${EXISTING##*/}
+            gh pr edit "$PR_NUMBER" \
+              --repo "$GITHUB_REPOSITORY" \
+              --body-file "$RUNNER_TEMP/sync-validation/pr-body.md"
+            echo "Existing PR updated: $EXISTING"
           else
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
               --title "chore(sync): update from upstream Hermes" \
