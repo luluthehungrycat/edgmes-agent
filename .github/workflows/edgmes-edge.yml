@@ -45,6 +45,16 @@ jobs:
       - name: Check edge console entry point
         run: uv run edgmes --help
 
+      - name: Build wheel
+        run: uv build --wheel --out-dir "$RUNNER_TEMP/edgmes-wheels"
+
+      - name: Check built wheel console entry point
+        run: |
+          uv venv "$RUNNER_TEMP/edgmes-wheel-venv" --python 3.11
+          uv pip install --python "$RUNNER_TEMP/edgmes-wheel-venv/bin/python" \
+            "$RUNNER_TEMP/edgmes-wheels"/*.whl
+          "$RUNNER_TEMP/edgmes-wheel-venv/bin/edgmes" --help
+
       - name: Run focused Edgmes tests
         run: scripts/run_tests.sh tests/edgmes/
 

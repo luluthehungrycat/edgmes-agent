@@ -9,6 +9,7 @@ import datetime as dt
 import json
 from pathlib import Path
 import subprocess
+import tomllib
 from typing import Sequence
 
 PROTECTED_PREFIXES = (
@@ -28,6 +29,7 @@ PROTECTED_PREFIXES = (
     "memory",
     "session",
 )
+DEFAULT_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass(frozen=True)
@@ -44,9 +46,26 @@ class SyncPlan:
         return asdict(self)
 
 
-def classify_paths(paths: Sequence[str]) -> tuple[tuple[str, ...], str]:
+def protected_prefixes(root: Path = DEFAULT_ROOT) -> tuple[str, ...]:
+    """Return static plus every packaged upstream namespace from the manifest."""
+    prefixes = set(PROTECTED_PREFIXES)
+    manifest = root / "pyproject.toml"
+    if manifest.is_file():
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        setuptools = data.get("tool", {}).get("setuptools", {})
+        for module in setuptools.get("py-modules", []):
+            if module:
+                prefixes.add(module)
+        for pattern in setuptools.get("packages", {}).get("find", {}).get("include", []):
+            if pattern:
+                prefixes.add(pattern.split(".", 1)[0] + "/")
+    return tuple(sorted(prefixes))
+
+
+def classify_paths(paths: Sequence[str], root: Path = DEFAULT_ROOT) -> tuple[tuple[str, ...], str]:
+    prefixes = protected_prefixes(root)
     protected = tuple(
-        path for path in paths if any(path == prefix or path.startswith(prefix) for prefix in PROTECTED_PREFIXES)
+        path for path in paths if any(path == prefix or path.startswith(prefix) for prefix in prefixes)
     )
     return protected, "high" if protected else "normal"
 

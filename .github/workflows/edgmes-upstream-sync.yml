@@ -14,10 +14,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  sync:
-    name: Create upstream sync PR
+  validate:
+    name: Validate upstream sync
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      commit_count: ${{ steps.plan.outputs.commit_count }}
+    permissions:
+      contents: read
     steps:
       - name: Checkout downstream history
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -73,7 +77,8 @@ jobs:
         if: steps.plan.outputs.commit_count != '0'
         run: |
           # Include the workflow run number so independent runs on the same
-          # day cannot collide. Reruns remain idempotent in the publish step.
+          # day cannot collide. Reruns update the same automation-owned ref
+          # only after validating the new merge commit.
           BRANCH="sync/upstream-$(date -u +%F)-run-${GITHUB_RUN_NUMBER}"
           export BRANCH
           uv run --locked python scripts/upstream/sync.py --create-branch --branch "$BRANCH"
@@ -84,6 +89,10 @@ jobs:
             git status --short
             exit 1
           fi
+          MERGE_SHA=$(git rev-parse HEAD)
+          git bundle create "$RUNNER_TEMP/sync.bundle" "$MERGE_SHA"
+          printf '%s\n' "$MERGE_SHA" > "$RUNNER_TEMP/merge-sha"
+          printf '%s\n' "$BRANCH" > "$RUNNER_TEMP/branch"
           {
             printf '%s\n' '## Upstream synchronization' ''
             printf '%s\n' '- upstream commits: ${{ steps.plan.outputs.commit_count }}'
@@ -91,13 +100,60 @@ jobs:
             printf '%s\n' '- branch: \`'"$BRANCH"'\`' ''
             printf '%s\n' 'This PR was created by automation. Review protected runtime, prompt, tool, state, and security paths before merging.'
           } > "$RUNNER_TEMP/pr-body.md"
-          echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Upload validated merge
+        if: steps.plan.outputs.commit_count != '0'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: edgmes-sync-validation-${{ github.run_id }}
+          path: |
+            ${{ runner.temp }}/sync.bundle
+            ${{ runner.temp }}/merge-sha
+            ${{ runner.temp }}/branch
+            ${{ runner.temp }}/pr-body.md
+          retention-days: 1
+
+  publish:
+    name: Publish validated upstream sync
+    needs: validate
+    if: needs.validate.result == 'success' && needs.validate.outputs.commit_count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      # This job intentionally does not execute repository scripts before the
+      # secret-bearing token is minted. Validation ran on a separate runner;
+      # only the validated Git bundle and metadata cross the job boundary.
+      - name: Checkout trusted workflow revision
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Download validated merge
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: edgmes-sync-validation-${{ github.run_id }}
+          path: ${{ runner.temp }}/sync-validation
+
+      - name: Read validated metadata
+        id: metadata
+        run: |
+          MERGE_SHA=$(cat "$RUNNER_TEMP/sync-validation/merge-sha")
+          BRANCH=$(cat "$RUNNER_TEMP/sync-validation/branch")
+          {
+            echo "merge_sha=$MERGE_SHA"
+            echo "branch=$BRANCH"
+          } >> "$GITHUB_OUTPUT"
+          git fetch "$RUNNER_TEMP/sync-validation/sync.bundle" "$MERGE_SHA"
+          git cat-file -e "$MERGE_SHA^{commit}"
 
       - name: Mint publication token
         id: publication-token
-        # Do not execute a local action from the newly merged upstream tree
-        # while handing it the App private key. This pinned third-party action
-        # is the trusted token-minting boundary for the pre-review sync job.
+        # This is the first step that receives APP_PRIVATE_KEY. No repository
+        # script or local action runs in this job before this pinned action.
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
@@ -105,24 +161,22 @@ jobs:
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
 
-      - name: Publish synchronization branch and PR
-        if: steps.plan.outputs.commit_count != '0'
+      - name: Publish validated synchronization branch and PR
         env:
           GH_TOKEN: ${{ steps.publication-token.outputs.token }}
         run: |
-          BRANCH="${{ steps.branch.outputs.branch }}"
-
-          # Keep the write-capable token out of the merge, boundary-check, and
-          # test step above. This publication step is the only place that can
-          # upload the validated merge commit and create/update the PR.
-          if gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/$BRANCH" >/dev/null 2>&1; then
-            echo "Existing synchronization branch: $BRANCH"
-          else
-            # The merge commit was created locally during validation. Unlike
-            # the refs API, git push uploads the commit object before creating
-            # the remote branch ref.
+          BRANCH="${{ steps.metadata.outputs.branch }}"
+          MERGE_SHA="${{ steps.metadata.outputs.merge_sha }}"
+          REMOTE_SHA=$(git ls-remote origin "refs/heads/$BRANCH" | awk '{print $1}')
+          if [ -z "$REMOTE_SHA" ]; then
             git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
-              push "https://github.com/$GITHUB_REPOSITORY.git" "HEAD:$BRANCH"
+              push origin "$MERGE_SHA:refs/heads/$BRANCH"
+          elif [ "$REMOTE_SHA" = "$MERGE_SHA" ]; then
+            echo "Synchronization branch already contains validated commit: $MERGE_SHA"
+          else
+            git -c "http.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+              push --force-with-lease="refs/heads/$BRANCH:$REMOTE_SHA" \
+              origin "$MERGE_SHA:refs/heads/$BRANCH"
           fi
 
           EXISTING=$(gh pr list --repo "$GITHUB_REPOSITORY" --head "$BRANCH" --json url --jq '.[0].url')
@@ -131,5 +185,5 @@ jobs:
           else
             gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
               --title "chore(sync): update from upstream Hermes" \
-              --body-file "$RUNNER_TEMP/pr-body.md"
+              --body-file "$RUNNER_TEMP/sync-validation/pr-body.md"
           fi

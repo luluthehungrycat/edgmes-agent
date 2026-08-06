@@ -17,12 +17,20 @@ def test_classify_paths_marks_inherited_runtime_as_high_risk() -> None:
             "agent/conversation_loop.py",
             "model_tools.py",
             "toolsets.py",
+            "hermes_cli/auth.py",
+            "acp_adapter/permissions.py",
             "docs/README.md",
             "new-file.py",
         ]
     )
 
-    assert protected == ("agent/conversation_loop.py", "model_tools.py", "toolsets.py")
+    assert protected == (
+        "agent/conversation_loop.py",
+        "model_tools.py",
+        "toolsets.py",
+        "hermes_cli/auth.py",
+        "acp_adapter/permissions.py",
+    )
     assert risk == "high"
 
 
