@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass
 import json
 import os
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping, Protocol, Sequence
 from urllib.error import HTTPError, URLError
@@ -14,8 +15,11 @@ from urllib.request import Request, urlopen
 
 from .capabilities import (
     ModelCapabilityProfile,
+    CapabilityProfileRegistry,
     PolicyDecision,
     PolicyRequest,
+    UnknownCapabilityProfileError,
+    default_capability_registry,
     resolve_tool_context_policy,
 )
 from .ledger import ContextBudgetError, StateLedger, LedgerEntry, select_bounded_context
@@ -56,12 +60,22 @@ class ChatBackend(Protocol):
 class RuntimeRequest:
     prompt: str
     requested_output: int = 0
+    profile_id: str | None = None
+    required_capabilities: frozenset[str] = frozenset()
+    required_tools: frozenset[str] = frozenset()
+    optional_tools: frozenset[str] = frozenset()
+    requested_steps: int = 1
+    requested_tool_calls: int = 0
+    requires_mutation: bool = False
+    mutation_approved: bool = False
 
     def __post_init__(self) -> None:
         if not self.prompt.strip():
             raise ValueError("runtime prompt must not be empty")
         if not isinstance(self.requested_output, int) or self.requested_output < 0:
             raise ValueError("requested_output must be a non-negative integer")
+        if self.profile_id is not None and not self.profile_id.strip():
+            raise ValueError("profile_id must not be empty")
 
 
 @dataclass(frozen=True)
@@ -159,18 +173,47 @@ class EdgeRuntime:
         model: str,
         profile: ModelCapabilityProfile | None = None,
         ledger: StateLedger | None = None,
+        profiles: CapabilityProfileRegistry | None = None,
+        default_profile_id: str | None = None,
+        ledger_path: str | Path | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
         self.backend = backend
         self.model = model
-        self.profile = profile or default_edge_profile()
-        self.ledger = ledger or StateLedger()
+        if profiles is None:
+            if profile is not None:
+                profiles = CapabilityProfileRegistry((profile,))
+                default_profile_id = profile.id
+            else:
+                profiles = default_capability_registry()
+                default_profile_id = default_profile_id or "edge-small"
+        self.profiles = profiles
+        self.default_profile_id = default_profile_id or "edge-small"
+        try:
+            self.profile = self.profiles.get(self.default_profile_id)
+        except UnknownCapabilityProfileError as exc:
+            raise ValueError(str(exc)) from exc
+        self.ledger_path = Path(ledger_path) if ledger_path is not None else None
+        self.ledger = (
+            StateLedger.load(self.ledger_path)
+            if ledger is None and self.ledger_path is not None and self.ledger_path.exists()
+            else ledger or StateLedger()
+        )
+
+    def _profile_for(self, request: RuntimeRequest) -> ModelCapabilityProfile:
+        profile_id = request.profile_id or self.default_profile_id
+        try:
+            return self.profiles.get(profile_id)
+        except UnknownCapabilityProfileError as exc:
+            raise RuntimePolicyError(str(exc)) from exc
 
     def run(self, request: RuntimeRequest) -> RuntimeResult:
-        request_id = f"request-{len(self.ledger.entries) + 1}"
-        current = LedgerEntry(request_id, "current_request", request.prompt, mandatory=True)
-        context_budget = self.profile.context_budget - len(self._SYSTEM)
+        profile = self._profile_for(request)
+        turn_number = len(self.ledger.entries) + 1
+        request_id = f"request-{turn_number}"
+        current = LedgerEntry(request_id, "current_request", request.prompt, mandatory=True, recency=turn_number)
+        context_budget = profile.context_budget - len(self._SYSTEM)
         if context_budget < 1:
             raise RuntimePolicyError("profile context budget cannot fit runtime instructions")
         try:
@@ -181,20 +224,23 @@ class EdgeRuntime:
             raise RuntimePolicyError(str(exc)) from exc
         estimated_context = len(self._SYSTEM) + projection.serialized_size
         policy = resolve_tool_context_policy(
-            self.profile,
+            profile,
             PolicyRequest(
+                required_capabilities=request.required_capabilities,
+                required_tools=request.required_tools,
+                optional_tools=request.optional_tools,
                 estimated_context=estimated_context,
                 requested_output=request.requested_output,
-                requested_steps=1,
-                requested_tool_calls=0,
+                requested_steps=request.requested_steps,
+                requested_tool_calls=request.requested_tool_calls,
+                requires_mutation=request.requires_mutation,
+                mutation_approved=request.mutation_approved,
             ),
         )
         if not policy.allowed:
             raise RuntimePolicyError("; ".join(policy.reasons))
         selected_context = tuple(item.entry_id for item in projection.selected)
-        content = "\n\n".join(
-            f"[{item.category}]\n{item.content}" for item in projection.selected
-        )
+        content = projection.rendered_text
         response = self.backend.complete(
             (
                 {"role": "system", "content": self._SYSTEM},
@@ -203,7 +249,6 @@ class EdgeRuntime:
             model=self.model,
             max_output=policy.max_output,
         )
-        turn_number = len(self.ledger.entries) + 1
         updated = self.ledger.append(current)
         updated = updated.append(
             LedgerEntry(
@@ -220,10 +265,13 @@ class EdgeRuntime:
                 verified=True,
             )
         )
+        self.ledger = updated
+        if self.ledger_path is not None:
+            self.ledger.save(self.ledger_path)
         return RuntimeResult(
             response.text,
             self.model,
-            self.profile.id,
+            profile.id,
             policy,
             selected_context,
             response.evidence,
@@ -235,6 +283,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run one bounded Edgmes local-model turn")
     parser.add_argument("prompt")
     parser.add_argument("--model", default=os.environ.get("EDGMES_MODEL", "jaahas/qwen3.5-uncensored:2b"))
+    parser.add_argument("--profile", default=os.environ.get("EDGMES_PROFILE", "edge-small"))
+    parser.add_argument("--ledger-path", type=Path, default=os.environ.get("EDGMES_LEDGER_PATH"))
     parser.add_argument("--base-url", default=os.environ.get("EDGMES_OLLAMA_URL", "http://127.0.0.1:11434"))
     parser.add_argument("--timeout", type=float, default=120.0)
     parser.add_argument("--json", action="store_true", dest="as_json")
@@ -242,6 +292,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
     result = EdgeRuntime(
         backend=OllamaBackend(args.base_url, args.timeout),
         model=args.model,
+        default_profile_id=args.profile,
+        ledger_path=args.ledger_path,
     ).run(RuntimeRequest(args.prompt))
     if args.as_json:
         print(json.dumps({

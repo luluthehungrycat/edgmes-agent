@@ -124,6 +124,70 @@ class CapabilityProfileRegistry:
         )
 
 
+def default_capability_profiles() -> tuple[ModelCapabilityProfile, ...]:
+    """Return the immutable named presets shipped with Edgmes."""
+
+    return (
+        ModelCapabilityProfile(
+            id="nano",
+            description="Minimal local model for bounded read-only prompts",
+            context_budget=8_000,
+            output_budget=256,
+            capabilities=frozenset({"chat"}),
+            max_steps=1,
+            max_tool_calls=1,
+            supports_tool_calling=False,
+        ),
+        ModelCapabilityProfile(
+            id="small",
+            description="Small local model with bounded read-only inspection",
+            context_budget=12_000,
+            output_budget=512,
+            capabilities=frozenset({"chat", "filesystem-read"}),
+            permitted_tools=frozenset({"read_file", "list_directory"}),
+            max_steps=2,
+            max_tool_calls=4,
+        ),
+        ModelCapabilityProfile(
+            id="medium-edge",
+            description="Medium local model for bounded inspection and tests",
+            context_budget=24_000,
+            output_budget=1_024,
+            capabilities=frozenset({"chat", "filesystem-read", "diagnostics", "testing"}),
+            permitted_tools=frozenset({"read_file", "list_directory", "run_tests"}),
+            max_steps=4,
+            max_tool_calls=8,
+        ),
+        ModelCapabilityProfile(
+            id="full",
+            description="Full-capability profile with explicitly approved mutation",
+            context_budget=64_000,
+            output_budget=4_096,
+            capabilities=frozenset({"chat", "filesystem-read", "diagnostics", "testing", "mutation"}),
+            permitted_tools=frozenset({"read_file", "list_directory", "run_tests", "write_file"}),
+            max_steps=8,
+            max_tool_calls=16,
+            allow_mutation=True,
+        ),
+        ModelCapabilityProfile(
+            id="edge-small",
+            description="Single-step local model with no executable tools",
+            context_budget=12_000,
+            output_budget=512,
+            capabilities=frozenset({"chat"}),
+            max_steps=1,
+            max_tool_calls=1,
+            supports_tool_calling=False,
+        ),
+    )
+
+
+def default_capability_registry() -> CapabilityProfileRegistry:
+    """Return a fresh immutable snapshot of the shipped profile presets."""
+
+    return CapabilityProfileRegistry(default_capability_profiles())
+
+
 @dataclass(frozen=True)
 class PolicyRequest:
     """Immutable request presented to the pure policy resolver."""
