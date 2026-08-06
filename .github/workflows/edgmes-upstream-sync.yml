@@ -90,7 +90,7 @@ jobs:
             exit 1
           fi
           MERGE_SHA=$(git rev-parse HEAD)
-          git bundle create "$RUNNER_TEMP/sync.bundle" "$MERGE_SHA"
+          git bundle create "$RUNNER_TEMP/sync.bundle" HEAD
           printf '%s\n' "$MERGE_SHA" > "$RUNNER_TEMP/merge-sha"
           printf '%s\n' "$BRANCH" > "$RUNNER_TEMP/branch"
           {
