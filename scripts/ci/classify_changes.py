@@ -119,7 +119,7 @@ def classify(files: list[str]) -> dict[str, bool]:
     ret = {
         "python": any(not _py_irrelevant(f) for f in files),
         "python_prod": any(not _py_irrelevant(f) and not _py_test_only(f) for f in files),
-        "edgmes": any(f.startswith(_EDGMES_PATHS) or f == "pyproject.toml" for f in files),
+        "edgmes": any(f.startswith(_EDGMES_PATHS) or f in {"pyproject.toml", "setup.py"} for f in files),
         "docker_meta":  any(f.startswith(_DOCKER_META) for f in files),
         "frontend": any(f.startswith(_FRONTEND) or f in _ROOT_NPM for f in files),
         "site": any(f.startswith(_SITE) for f in files),

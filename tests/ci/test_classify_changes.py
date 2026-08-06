@@ -92,7 +92,7 @@ CASES = {
     ),
     # Supply-chain lanes
     ".pth file → scan": (["evil.pth"], _lanes(python=True, scan=True)),
-    "setup.py → scan": (["setup.py"], _lanes(python=True, scan=True)),
+    "setup.py → scan and edge checks": (["setup.py"], _lanes(python=True, scan=True, edgmes=True)),
     "mcp catalog manifest → mcp_catalog": (
         ["optional-mcps/foo/manifest.yaml"],
         _lanes(python=True, mcp_catalog=True),
