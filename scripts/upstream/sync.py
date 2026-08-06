@@ -22,6 +22,7 @@ PROTECTED_PREFIXES = (
     "model_tools.py",
     "toolsets.py",
     "pyproject.toml",
+    "setup.py",
     "uv.lock",
     "prompt",
     "context",

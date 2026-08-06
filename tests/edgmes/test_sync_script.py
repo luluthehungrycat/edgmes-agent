@@ -60,9 +60,9 @@ def test_create_branch_starts_from_configured_base(monkeypatch, tmp_path: Path) 
 
 
 def test_manifest_and_lockfile_changes_are_protected() -> None:
-    protected, risk = MODULE.classify_paths(["pyproject.toml", "uv.lock"])
+    protected, risk = MODULE.classify_paths(["pyproject.toml", "setup.py", "uv.lock"])
 
-    assert protected == ("pyproject.toml", "uv.lock")
+    assert protected == ("pyproject.toml", "setup.py", "uv.lock")
     assert risk == "high"
 
 
