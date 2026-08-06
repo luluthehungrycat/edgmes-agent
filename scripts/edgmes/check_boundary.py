@@ -52,7 +52,9 @@ def check(root: Path) -> list[str]:
     manifest_data = tomllib.loads(manifest_text)
     package_find = manifest_data.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
     included_packages = package_find.get("include", [])
+    py_modules = manifest_data.get("tool", {}).get("setuptools", {}).get("py-modules", [])
     forbidden_top_level = set(FORBIDDEN_ROOT_MODULES)
+    forbidden_top_level.update(module.split(".", 1)[0] for module in py_modules if module)
     forbidden_top_level.update(
         pattern.split(".", 1)[0]
         for pattern in included_packages

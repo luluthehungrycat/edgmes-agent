@@ -95,7 +95,10 @@ jobs:
 
       - name: Mint publication token
         id: publication-token
-        uses: ./.github/actions/get-app-token
+        # Do not execute a local action from the newly merged upstream tree
+        # while handing it the App private key. This pinned third-party action
+        # is the trusted token-minting boundary for the pre-review sync job.
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         with:
           client-id: ${{ vars.APP_CLIENT_ID }}
           private-key: ${{ secrets.APP_PRIVATE_KEY }}
