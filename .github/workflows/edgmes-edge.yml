@@ -46,6 +46,11 @@ jobs:
         run: uv run edgmes --help
 
       - name: Build wheel
+        env:
+          # setup.py permits wheel construction only through the sanctioned
+          # uv2nix/Nix build path; use the same explicit guard for CI's
+          # non-editable package smoke test.
+          HERMES_NIX_BUILD: "1"
         run: uv build --wheel --out-dir "$RUNNER_TEMP/edgmes-wheels"
 
       - name: Check built wheel console entry point
