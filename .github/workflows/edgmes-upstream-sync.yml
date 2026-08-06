@@ -82,14 +82,19 @@ jobs:
           BRANCH="sync/upstream-$(date -u +%F)-run-${GITHUB_RUN_NUMBER}"
           export BRANCH
           uv run --locked python scripts/upstream/sync.py --create-branch --branch "$BRANCH"
+          EXPECTED_MERGE_SHA=$(git rev-parse HEAD)
           uv run --locked python scripts/edgmes/check_boundary.py
           scripts/run_tests.sh tests/edgmes/
+          if [ "$(git rev-parse HEAD)" != "$EXPECTED_MERGE_SHA" ]; then
+            echo "::error::Validation changed HEAD after merge; refusing to publish an unvalidated commit."
+            exit 1
+          fi
           if [ -n "$(git status --porcelain)" ]; then
             echo "::error::Validation changed the working tree; refusing to publish an unvalidated tree."
             git status --short
             exit 1
           fi
-          MERGE_SHA=$(git rev-parse HEAD)
+          MERGE_SHA="$EXPECTED_MERGE_SHA"
           git bundle create "$RUNNER_TEMP/sync.bundle" HEAD
           printf '%s\n' "$MERGE_SHA" > "$RUNNER_TEMP/merge-sha"
           printf '%s\n' "$BRANCH" > "$RUNNER_TEMP/branch"

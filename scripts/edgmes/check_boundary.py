@@ -48,8 +48,7 @@ def check(root: Path) -> list[str]:
         return [f"missing package directory: {package}"]
     if not manifest.is_file():
         return [f"missing package manifest: {manifest}"]
-    manifest_text = manifest.read_text(encoding="utf-8")
-    manifest_data = tomllib.loads(manifest_text)
+    manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
     package_find = manifest_data.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
     included_packages = package_find.get("include", [])
     py_modules = manifest_data.get("tool", {}).get("setuptools", {}).get("py-modules", [])
@@ -60,9 +59,10 @@ def check(root: Path) -> list[str]:
         for pattern in included_packages
         if pattern and pattern.split(".", 1)[0] != "edgmes"
     )
-    if '"edgmes"' not in manifest_text or '"edgmes.*"' not in manifest_text:
+    if "edgmes" not in included_packages or "edgmes.*" not in included_packages:
         errors.append("pyproject.toml does not include edgmes package discovery")
-    if "edgmes = \"edgmes.runtime:_main\"" not in manifest_text:
+    scripts = manifest_data.get("project", {}).get("scripts", {})
+    if scripts.get("edgmes") != "edgmes.runtime:_main":
         errors.append("pyproject.toml does not expose the edgmes console entry point")
     for path in sorted(package.rglob("*.py")):
         source = path.read_text(encoding="utf-8")

@@ -90,3 +90,16 @@ def test_boundary_derives_single_file_modules_from_manifest(tmp_path: Path) -> N
     errors = MODULE.check(tmp_path)
 
     assert any("forbidden upstream namespace new_upstream_runtime" in error for error in errors)
+
+
+def test_boundary_uses_parsed_manifest_values(tmp_path: Path) -> None:
+    (tmp_path / "edgmes").mkdir()
+    (tmp_path / "pyproject.toml").write_text(
+        "[project.scripts]\n"
+        "edgmes = 'edgmes.runtime:_main'\n\n"
+        "[tool.setuptools.packages.find]\n"
+        "include = [\n  'edgmes',\n  'edgmes.*',\n]\n",
+        encoding="utf-8",
+    )
+
+    assert MODULE.check(tmp_path) == []
