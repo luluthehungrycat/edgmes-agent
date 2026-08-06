@@ -43,6 +43,7 @@ jobs:
     outputs:
       python: ${{ steps.classify.outputs.python }}
       python_prod: ${{ steps.classify.outputs.python_prod }}
+      edgmes: ${{ steps.classify.outputs.edgmes }}
       frontend: ${{ steps.classify.outputs.frontend }}
       site: ${{ steps.classify.outputs.site }}
       scan: ${{ steps.classify.outputs.scan }}
@@ -80,6 +81,12 @@ jobs:
     uses: ./.github/workflows/lint.yml
     with:
       event_name: ${{ needs.detect.outputs.event_name }}
+
+  edgmes-edge:
+    name: Edgmes Edge Checks
+    needs: detect
+    if: needs.detect.outputs.edgmes == 'true'
+    uses: ./.github/workflows/edgmes-edge.yml
 
   js-tests:
     name: JS & TS checks
@@ -279,6 +286,7 @@ jobs:
       - docs-site
       - history-check
       - contributor-check
+      - edgmes-edge
       - uv-lockfile
       - lockfile-diff
       - docker-lint

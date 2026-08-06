@@ -24,6 +24,7 @@ ci_review_files = _mod.ci_review_files
 DEFAULT = {
     "python": True,
     "python_prod": True,
+    "edgmes": True,
     "frontend": True,
     "docker_meta": True,
     "site": True,
@@ -35,12 +36,13 @@ DEFAULT = {
 }
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm_lock=False, mcp_catalog=False, docker_meta=False, ci_review=False, python_prod=None) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm_lock=False, mcp_catalog=False, docker_meta=False, ci_review=False, python_prod=None, edgmes=False) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     return {
         "python": python,
         "python_prod": python if python_prod is None else python_prod,
+        "edgmes": edgmes,
         "frontend": frontend,
         "docker_meta": docker_meta,
         "site": site,
@@ -55,7 +57,8 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, npm
 CASES = {
     "docs-only → nothing heavy": (["README.md", "docs/guide.md"], _lanes()),
     "python source → python": (["run_agent.py"], _lanes(python=True, scan=True)),
-    "dep manifest → python": (["pyproject.toml"], _lanes(python=True, scan=True, deps=True)),
+    "dep manifest → python": (["pyproject.toml"], _lanes(python=True, scan=True, deps=True, edgmes=True)),
+    "edgmes source → edge checks": (["edgmes/runtime.py"], _lanes(python=True, scan=True, edgmes=True)),
     "uv.lock → python": (["uv.lock"], _lanes(python=True)),
     "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(frontend=True)),
     "ui-tui → frontend": (["ui-tui/src/entry.ts"], _lanes(frontend=True)),
@@ -89,7 +92,7 @@ CASES = {
     ),
     # Supply-chain lanes
     ".pth file → scan": (["evil.pth"], _lanes(python=True, scan=True)),
-    "setup.py → scan": (["setup.py"], _lanes(python=True, scan=True)),
+    "setup.py → scan and edge checks": (["setup.py"], _lanes(python=True, scan=True, edgmes=True)),
     "mcp catalog manifest → mcp_catalog": (
         ["optional-mcps/foo/manifest.yaml"],
         _lanes(python=True, mcp_catalog=True),

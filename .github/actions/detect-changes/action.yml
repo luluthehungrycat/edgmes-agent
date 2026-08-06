@@ -18,6 +18,9 @@ outputs:
   python_prod:
     description: Python changes outside tests/ — gates product jobs (Desktop E2E, Docker).
     value: ${{ steps.classify.outputs.python_prod }}
+  edgmes:
+    description: Run Edgmes boundary, entry-point, compile, lint, and focused tests.
+    value: ${{ steps.classify.outputs.edgmes }}
   frontend:
     description: Run the TypeScript testing matrix + desktop build.
     value: ${{ steps.classify.outputs.frontend }}
