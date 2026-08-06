@@ -3,25 +3,6 @@ name: Edgmes Edge Checks
 on:
   workflow_call:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "edgmes/**"
-      - "tests/edgmes/**"
-      - "scripts/edgmes/**"
-      - "scripts/upstream/**"
-      - "docs/edgmes/**"
-      - "pyproject.toml"
-      - ".github/workflows/edgmes-edge.yml"
-  pull_request:
-    paths:
-      - "edgmes/**"
-      - "tests/edgmes/**"
-      - "scripts/edgmes/**"
-      - "scripts/upstream/**"
-      - "docs/edgmes/**"
-      - "pyproject.toml"
-      - ".github/workflows/edgmes-edge.yml"
 
 permissions:
   contents: read

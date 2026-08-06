@@ -20,6 +20,7 @@ Lanes:
 * ``deps``        — pyproject.toml dependency bounds check.
 * ``npm_lock``    — semantic package-lock.json diff PR comment.
 * ``mcp_catalog`` — bundled MCP catalog / installer review.
+* ``edgmes``      — Edgmes boundary and focused edge checks.
 
 Docker is not a lane — it builds on push-to-main and release only,
 never per-PR.
@@ -67,6 +68,7 @@ _SCAN_FILES = {"setup.cfg", "pyproject.toml"}
 # MCP catalog files that require explicit security review.
 _MCP_CATALOG_PATHS = ("optional-mcps/",)
 _MCP_CATALOG_FILES = {"hermes_cli/mcp_catalog.py"}
+_EDGMES_PATHS = ("edgmes/", "tests/edgmes/", "scripts/edgmes/", "scripts/upstream/", "docs/edgmes/")
 
 def _is_docs(p: str) -> bool:
     if p.startswith(("skills/", "optional-skills/")):
@@ -117,6 +119,7 @@ def classify(files: list[str]) -> dict[str, bool]:
     ret = {
         "python": any(not _py_irrelevant(f) for f in files),
         "python_prod": any(not _py_irrelevant(f) and not _py_test_only(f) for f in files),
+        "edgmes": any(f.startswith(_EDGMES_PATHS) or f == "pyproject.toml" for f in files),
         "docker_meta":  any(f.startswith(_DOCKER_META) for f in files),
         "frontend": any(f.startswith(_FRONTEND) or f in _ROOT_NPM for f in files),
         "site": any(f.startswith(_SITE) for f in files),
@@ -129,6 +132,7 @@ def classify(files: list[str]) -> dict[str, bool]:
     if not files or any(f.startswith(".github/") for f in files):
         ret["python"] = True
         ret["python_prod"] = True
+        ret["edgmes"] = True
         ret["docker_meta"] = True
         ret["frontend"] = True
         ret["site"] = True

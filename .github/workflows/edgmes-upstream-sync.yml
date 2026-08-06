@@ -57,7 +57,7 @@ jobs:
       - name: Classify upstream delta
         id: plan
         run: |
-          uv run python scripts/upstream/sync.py --json > "$RUNNER_TEMP/upstream-plan.json"
+          uv run --locked python scripts/upstream/sync.py --json > "$RUNNER_TEMP/upstream-plan.json"
           cat "$RUNNER_TEMP/upstream-plan.json"
           COUNT=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["commit_count"])' "$RUNNER_TEMP/upstream-plan.json")
           RISK=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["risk"])' "$RUNNER_TEMP/upstream-plan.json")
@@ -76,24 +76,36 @@ jobs:
           # day cannot collide. Reruns remain idempotent in the publish step.
           BRANCH="sync/upstream-$(date -u +%F)-run-${GITHUB_RUN_NUMBER}"
           export BRANCH
-          uv run python scripts/upstream/sync.py --create-branch --branch "$BRANCH"
-          uv run python scripts/edgmes/check_boundary.py
+          uv run --locked python scripts/upstream/sync.py --create-branch --branch "$BRANCH"
+          uv run --locked python scripts/edgmes/check_boundary.py
           scripts/run_tests.sh tests/edgmes/
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::Validation changed the working tree; refusing to publish an unvalidated tree."
+            git status --short
+            exit 1
+          fi
           {
-            echo "## Upstream synchronization"
-            echo
-            echo "- upstream commits: ${{ steps.plan.outputs.commit_count }}"
-            echo "- classified risk: ${{ steps.plan.outputs.risk }}"
-            echo "- branch: \\`$BRANCH\\`"
-            echo
-            echo "This PR was created by automation. Review protected runtime, prompt, tool, state, and security paths before merging."
+            printf '%s\n' '## Upstream synchronization' ''
+            printf '%s\n' '- upstream commits: ${{ steps.plan.outputs.commit_count }}'
+            printf '%s\n' '- classified risk: ${{ steps.plan.outputs.risk }}'
+            printf '%s\n' '- branch: \`'"$BRANCH"'\`' ''
+            printf '%s\n' 'This PR was created by automation. Review protected runtime, prompt, tool, state, and security paths before merging.'
           } > "$RUNNER_TEMP/pr-body.md"
           echo "branch=$BRANCH" >> "$GITHUB_OUTPUT"
+
+      - name: Mint publication token
+        id: publication-token
+        uses: ./.github/actions/get-app-token
+        with:
+          client-id: ${{ vars.APP_CLIENT_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
 
       - name: Publish synchronization branch and PR
         if: steps.plan.outputs.commit_count != '0'
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.publication-token.outputs.token }}
         run: |
           BRANCH="${{ steps.branch.outputs.branch }}"
 
