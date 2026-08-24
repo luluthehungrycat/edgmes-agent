@@ -34,7 +34,8 @@ jobs:
           SYNC_MERGE=""
           case "${GITHUB_HEAD_REF:-}" in
             sync/upstream-*|feat/upstream-sync-*)
-              SYNC_MERGE=$(git log "${MERGE_BASE}..HEAD" --merges --format='%H' -1)
+              SYNC_MERGE=$(git log "${MERGE_BASE}..HEAD" --merges \
+                --grep='^chore(sync):.*upstream' --format='%H' -1)
               ;;
           esac
           if [ -n "$SYNC_MERGE" ]; then

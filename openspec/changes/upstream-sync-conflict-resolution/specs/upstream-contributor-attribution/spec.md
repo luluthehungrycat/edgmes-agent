@@ -6,7 +6,7 @@ Ensures contributor attribution remains meaningful for downstream synchronizatio
 
 ### Requirement: Imported upstream history is excluded from downstream attribution
 
-The attribution check MUST exclude commits reachable from the second parent of the synchronization merge while continuing to inspect downstream commits introduced before or after that merge.
+The attribution check MUST select the latest merge whose subject matches the canonical synchronization pattern `chore(sync):.*upstream`, not the latest arbitrary merge on the branch, and MUST exclude commits reachable from that merge's second parent while continuing to inspect downstream commits introduced before or after the synchronization merge.
 
 #### Scenario: Sync branch imports upstream history
 

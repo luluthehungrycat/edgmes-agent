@@ -31,6 +31,10 @@ def test_sync_branch_excludes_imported_upstream_parent(monkeypatch):
     monkeypatch.setattr(MODULE, "run", fake_run)
 
     assert MODULE.new_emails() == ["downstream@example.com"]
+    assert (
+        "--grep=^chore(sync):.*upstream"
+        in next(call for call in calls if "--merges" in call)
+    )
     assert ("git", "log", "base..HEAD", "--not", "upstream-parent", "--format=%ae", "--no-merges") in calls
 
 

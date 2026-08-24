@@ -63,7 +63,16 @@ def new_emails() -> list[str]:
     branch = run("git", "branch", "--show-current", check=False)
     sync_branch = branch.startswith(("sync/upstream-", "feat/upstream-sync-"))
     sync_merge = (
-        run("git", "log", f"{base}..HEAD", "--merges", "--format=%H", "-1", check=False)
+        run(
+            "git",
+            "log",
+            f"{base}..HEAD",
+            "--merges",
+            "--grep=^chore(sync):.*upstream",
+            "--format=%H",
+            "-1",
+            check=False,
+        )
         if sync_branch
         else ""
     )
