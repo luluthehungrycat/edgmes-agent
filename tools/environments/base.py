@@ -7,6 +7,7 @@ or a temp file (local).
 """
 
 import codecs
+import hashlib
 import json
 import logging
 import os
@@ -52,6 +53,32 @@ _activity_callback_local = threading.local()
 _UNBOUNDED_CAPTURE_CHARS = 2**63 - 1
 
 
+class EnvironmentConnectionError(RuntimeError):
+    """Infrastructure/connection-class failure of a terminal backend.
+
+    Raised when the backend itself is unreachable (SSH host down, Docker
+    daemon not running, remote file sync failing on a dead link) — never
+    for a command that merely exited nonzero.  Subclassing RuntimeError
+    keeps every existing ``except RuntimeError`` catcher working.
+
+    ``terminal_tool`` turns this into a structured ``status: "degraded"``
+    tool result (config gate ``terminal.degraded_mode: warn|fail``) so the
+    model gets an actionable reason + retry hint instead of a traceback.
+    The failed backend is never cached, so a later call retries from
+    scratch and simply works once the backend is reachable again.
+    """
+
+    def __init__(self, reason: str, *, retry_hint: str = ""):
+        super().__init__(reason)
+        self.reason = reason
+        self.retry_hint = retry_hint or (
+            "This is an infrastructure failure, not a command failure. "
+            "Verify the backend is reachable (network, service running, "
+            "credentials), then retry the same command — recovery is "
+            "automatic once the backend is back."
+        )
+
+
 class _BoundedOutputCollector:
     """Retain a bounded 40/60 head-tail window of streamed text.
 
@@ -86,8 +113,15 @@ class _BoundedOutputCollector:
             return
         try:
             if self._spill_fh is None:
-                self._spill_path.parent.mkdir(parents=True, exist_ok=True)
-                self._spill_fh = open(self._spill_path, "w", encoding="utf-8", errors="replace")
+                from tools.spill_safety import ensure_spill_dir, open_exclusive
+
+                # Raw pre-redaction output: private perms + symlink-refusing
+                # exclusive create (a planted link must fail the spill, never
+                # redirect the write).
+                ensure_spill_dir(self._spill_path.parent, private=True)
+                self._spill_fh = open_exclusive(
+                    self._spill_path, private=True, errors="replace"
+                )
                 # Backfill everything retained so far so the file holds the
                 # stream from byte 0, not just from the overflow point.
                 backlog = "".join(self._head) + "".join(self._tail)
@@ -261,6 +295,58 @@ def get_sandbox_dir() -> Path:
     return p
 
 
+# A persistent sandbox's host directory is named after task_id, and that name
+# then becomes the source half of a `-v <source>:<target>` spec (Docker) or a
+# writable-overlay directory (Singularity). Docker splits the spec on ':', so
+# a colon-bearing name arrives as extra mount fields and the run is refused
+# outright ("invalid spec ... too many colons" / "invalid mode", exit 125).
+# Path separators would additionally escape the sandbox root, and Windows
+# forbids ':' in path segments entirely.
+_SANDBOX_DIR_UNSAFE_RE = re.compile(r"[^A-Za-z0-9._-]")
+_SANDBOX_DIR_MAX_LEN = 128
+_SANDBOX_DIR_HASH_LEN = 12
+
+
+def sanitize_task_id_for_path(task_id: str) -> str:
+    """Return a bind-mountable directory name for *task_id*'s sandbox.
+
+    Shared by every environment backend that turns a task id into a host
+    filesystem path component (Docker persistent sandboxes, Singularity
+    persistent overlays). Names that are already safe are returned verbatim,
+    so the shared ``default`` sandbox and RL/benchmark task ids keep resolving
+    to the directory they have always used — no installed package or ``/root``
+    state moves. Only ids that could never have produced a working bind mount
+    are rewritten.
+
+    A rewrite also appends a digest of the original id, because the character
+    substitution alone is not injective: ``a:b`` and ``a_b`` would otherwise
+    share one persistent sandbox and leak one session's ``/root`` into
+    another's container. The digest is a pure function of the id, so the same
+    session resolves to the same directory in every process — cross-process
+    container reuse depends on that.
+    """
+    value = task_id if isinstance(task_id, str) else ""
+    if not value:
+        # An empty component collapses the path onto the sandbox root, which
+        # would bind-mount every task's state at once.
+        return "default"
+
+    cleaned = _SANDBOX_DIR_UNSAFE_RE.sub("_", value)
+    if (
+        cleaned == value
+        and len(value) <= _SANDBOX_DIR_MAX_LEN
+        and value not in {".", ".."}
+        # Windows silently strips trailing dots/spaces, aliasing two ids onto
+        # one directory.
+        and not value.endswith((".", " "))
+    ):
+        return value
+
+    digest = hashlib.sha256(value.encode("utf-8")).hexdigest()[:_SANDBOX_DIR_HASH_LEN]
+    stem = cleaned[: _SANDBOX_DIR_MAX_LEN - _SANDBOX_DIR_HASH_LEN - 1].strip("._")
+    return f"{stem or 'task'}-{digest}"
+
+
 # ---------------------------------------------------------------------------
 # Shared constants and utilities
 # ---------------------------------------------------------------------------
@@ -281,23 +367,51 @@ def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:
     newline translation entirely on every platform.  No behaviour change
     on POSIX — the byte sequence is identical to what text-mode would
     produce there.
+
+    Encoding uses ``errors="surrogateescape"`` — the exact inverse of the
+    surrogateescape decode, so original bytes are restored.  For
+    surrogate-free strings it is byte-identical to strict UTF-8.
+    Surrogates outside the round-trip range U+DC80–U+DCFF raise and are
+    recorded on ``proc._hermes_stdin_errors`` while stdin is still closed
+    in ``finally`` so the child sees EOF instead of hanging;
+    ``_wait_for_process`` reads the recorded error and surfaces it as
+    ``stdin_error`` on the result.
     """
 
-    def _write():
-        try:
-            # proc.stdin is a TextIOWrapper when text=True was set on the
-            # Popen.  Its ``.buffer`` attribute is the raw BufferedWriter
-            # that bypasses newline translation.  When Popen was created
-            # in byte mode, proc.stdin is already a BufferedWriter with
-            # no ``.buffer`` attribute — fall back to .write() directly.
-            raw = data.encode("utf-8") if isinstance(data, str) else data
-            target = getattr(proc.stdin, "buffer", proc.stdin)
-            target.write(raw)
-            target.close()
-        except (BrokenPipeError, OSError):
-            pass
+    errors: list[BaseException] = []
+    proc._hermes_stdin_errors = errors
 
-    threading.Thread(target=_write, daemon=True).start()
+    def _write():
+        if proc.stdin is None:
+            errors.append(RuntimeError("process stdin unavailable"))
+            return
+        # Resolve the target BEFORE encoding: a failed encode must still
+        # reach the finally-close, or the child hangs on EOF forever.
+        target = getattr(proc.stdin, "buffer", proc.stdin)
+        try:
+            raw = data.encode("utf-8", "surrogateescape") if isinstance(data, str) else data
+            written = target.write(raw)
+            if written != len(raw):
+                # Buffered writers normally complete or raise; a short write
+                # is a real failure and must be surfaced, not swallowed.
+                raise RuntimeError(f"short stdin write: {written} of {len(raw)} bytes")
+        except (BrokenPipeError, OSError):
+            pass  # child closed stdin early — normal
+        except Exception as exc:
+            # Only reachable with surrogates outside the surrogateescape
+            # round-trip range (e.g. a literal U+D800). Record it so
+            # _wait_for_process can surface it instead of a silent false
+            # success.
+            errors.append(exc)
+        finally:
+            try:
+                target.close()
+            except Exception:
+                pass
+
+    thread = threading.Thread(target=_write, daemon=True)
+    proc._hermes_stdin_thread = thread
+    thread.start()
 
 
 def _popen_bash(
@@ -468,7 +582,8 @@ def _cwd_marker(session_id: str) -> str:
 # as the Python-side contract for the exclusion set; the dump path unsets by
 # name/prefix instead of grepping declare lines (see below / issue #71296).
 _SNAPSHOT_EXCLUDED_ENV_REGEX = (
-    "^declare -x (HERMES_SESSION_|HERMES_UI_SESSION_ID|HERMES_CRON_AUTO_DELIVER_|HERMES_CRON_SESSION)"
+    "^declare -x (HERMES_SESSION_|HERMES_UI_SESSION_ID|HERMES_CRON_AUTO_DELIVER_|"
+    "HERMES_CRON_SESSION|HERMES_BROWSER_CONTROL_)"
 )
 _SHELL_ENV_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
@@ -512,6 +627,14 @@ def _export_dump_excluding_session_vars(
     return (
         "{ ( "
         "unset ${!HERMES_SESSION_*} ${!HERMES_CRON_AUTO_DELIVER_*} "
+        "${!HERMES_BROWSER_CONTROL_*} "
+        # AI_AGENT / HERMES_AGENT are per-command attribution markers
+        # (re-exported by every _wrap_command with outer-harness-preserving
+        # ${VAR:-default} semantics).  Persisting them into the snapshot
+        # would make the FIRST command's value override a later outer
+        # harness value arriving via the process env, exactly like the
+        # session-var leak this dump already guards against.
+        "AI_AGENT HERMES_AGENT "
         f"HERMES_UI_SESSION_ID{extra_unset} 2>/dev/null; "
         "export -p; "
         ") || true; } "
@@ -831,6 +954,23 @@ class BaseEnvironment(ABC):
                 f'else unset {name}; fi'
             )
             parts.append(f"unset {present} {value}")
+
+        # Harness attribution: every tool subprocess advertises that it runs
+        # under Hermes via the cross-agent ``AI_AGENT`` standard (read by e.g.
+        # huggingface_hub's agent detection) plus the Hermes-specific
+        # ``HERMES_AGENT`` marker.  The value MUST equal our id in the public
+        # agent-harness registry (``hermes-agent`` — see huggingface.js
+        # ``agent-harnesses.ts``); standard-var matching is exact, so any other
+        # value is reported as "unknown".  Setting it here (rather than only in
+        # the host process env) is what carries the marker into REMOTE backends
+        # (Docker/SSH/Modal/Daytona/Singularity/Vercel), whose exec env is not
+        # inherited from the Hermes process.  ``${VAR:-default}`` semantics:
+        # never clobber an outer harness value that arrived via the inherited
+        # process env (Hermes running inside another agent's terminal).
+        parts.append(
+            'export AI_AGENT="${AI_AGENT:-hermes-agent}" '
+            'HERMES_AGENT="${HERMES_AGENT:-true}"'
+        )
 
         # Preserve bare ``~`` expansion, but rewrite ``~/...`` through
         # ``$HOME`` so suffixes with spaces remain a single shell word.
@@ -1207,7 +1347,22 @@ class BaseEnvironment(ABC):
                 proc.returncode,
             )
 
-        return self._finalize_wait_result(output, output.render(), proc.returncode)
+        # Join the stdin writer thread before reading its error list: a child
+        # that exits without reading stdin can otherwise race ahead of a
+        # recorded encode failure, silently dropping it. The thread cannot
+        # block long after child exit (write raises BrokenPipeError once the
+        # pipe closes); the timeout is a pure safety net.
+        stdin_thread = getattr(proc, "_hermes_stdin_thread", None)
+        if stdin_thread is not None:
+            stdin_thread.join(timeout=5)
+        rendered = output.render()
+        result = self._finalize_wait_result(output, rendered, proc.returncode)
+        stdin_errors = getattr(proc, "_hermes_stdin_errors", None)
+        if stdin_errors:
+            err = str(stdin_errors[0])
+            result["stdin_error"] = err
+            result["output"] = rendered + f"\n[stdin write failed: {err}]"
+        return result
 
     @staticmethod
     def _finalize_wait_result(collector: "_BoundedOutputCollector",
@@ -1240,6 +1395,13 @@ class BaseEnvironment(ABC):
 
         Updates self.cwd and strips the marker from result["output"].
         Used by remote backends (Docker, SSH, Modal, Daytona, Singularity).
+
+        Sets ``result["cwd_observed"]`` when the marker yielded a directory for
+        THIS command. The wrapper prints the marker after the command returns,
+        so a killed / timed-out command never emits one and ``self.cwd`` keeps
+        whatever the previous command left there. That environment is shared by
+        every session, so callers must not attribute an unobserved cwd to the
+        session that ran this command (see terminal_tool's session-cwd record).
         """
         output = result.get("output", "")
         marker = self._cwd_marker
@@ -1256,6 +1418,7 @@ class BaseEnvironment(ABC):
         cwd_path = output[first + len(marker) : last].strip()
         if cwd_path:
             self.cwd = cwd_path
+            result["cwd_observed"] = True
 
         # Strip the marker line AND the \n we injected before it.
         # The wrapper emits: printf '\n__MARKER__%s__MARKER__\n'

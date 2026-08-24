@@ -1,6 +1,7 @@
 export type GatewayEventName =
   | 'gateway.ready'
   | 'session.info'
+  | 'session.usage'
   | 'message.start'
   | 'message.delta'
   | 'message.interim'
@@ -26,6 +27,9 @@ export interface GatewayEvent<P = unknown> {
   payload?: P
   /** Renderer-side source tag added by the Desktop gateway registry. */
   profile?: string
+  /** Registry connection whose socket delivered the event (renderer-side tag;
+   * absent for the local/legacy primary path). */
+  connectionId?: string
   session_id?: string
   type: GatewayEventName
 }
@@ -33,12 +37,31 @@ export interface GatewayEvent<P = unknown> {
 export type ConnectionState = 'idle' | 'connecting' | 'open' | 'closed' | 'error'
 export type GatewayRequestId = number | string
 
+export interface JsonRpcErrorPayload {
+  code?: number
+  data?: unknown
+  message?: string
+}
+
 export interface JsonRpcFrame {
-  error?: { message?: string }
+  error?: JsonRpcErrorPayload
   id?: GatewayRequestId | null
   method?: string
   params?: GatewayEvent
   result?: unknown
+}
+
+/** JSON-RPC error with optional structured `data` from the gateway. */
+export class JsonRpcGatewayError extends Error {
+  readonly code?: number
+  readonly data?: unknown
+
+  constructor(message: string, options?: { code?: number; data?: unknown }) {
+    super(message)
+    this.name = 'JsonRpcGatewayError'
+    this.code = options?.code
+    this.data = options?.data
+  }
 }
 
 export type WebSocketLike = WebSocket
@@ -54,6 +77,8 @@ export interface GatewayClientOptions {
   connectErrorMessage?: string
   connectTimeoutMs?: number
   createRequestId?: (nextId: number) => GatewayRequestId
+  heartbeatDeadlineMs?: number
+  heartbeatIntervalMs?: number
   /** Return true to intercept the default closed-state transition. */
   onSocketClose?: (event: CloseEvent) => boolean | void
   requestIdPrefix?: string
@@ -64,6 +89,8 @@ export interface GatewayClientOptions {
 
 const ANY = '*'
 const DEFAULT_REQUEST_TIMEOUT_MS = 120_000
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 15_000
+const DEFAULT_HEARTBEAT_DEADLINE_MS = 45_000
 // A reconnect after sleep/wake must not hang forever in 'connecting' (which
 // keeps the composer disabled and stuck on "Starting Hermes..."). If the open
 // handshake doesn't land in this window, fail to 'error' so callers can retry.
@@ -74,6 +101,9 @@ export class JsonRpcGatewayClient {
   private pending = new Map<GatewayRequestId, PendingCall>()
   private socket: WebSocketLike | null = null
   private state: ConnectionState = 'idle'
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null
+  private heartbeatSequence = 0
+  private lastInboundAt = 0
   private readonly eventHandlers = new Map<string, Set<(event: GatewayEvent) => void>>()
   private readonly stateHandlers = new Set<(state: ConnectionState) => void>()
   private readonly options: Required<Omit<GatewayClientOptions, 'socketFactory'>> &
@@ -85,6 +115,8 @@ export class JsonRpcGatewayClient {
       connectErrorMessage: options.connectErrorMessage ?? 'WebSocket connection failed',
       connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
       createRequestId: options.createRequestId ?? ((nextId: number) => `${options.requestIdPrefix ?? 'r'}${nextId}`),
+      heartbeatDeadlineMs: options.heartbeatDeadlineMs ?? DEFAULT_HEARTBEAT_DEADLINE_MS,
+      heartbeatIntervalMs: options.heartbeatIntervalMs ?? DEFAULT_HEARTBEAT_INTERVAL_MS,
       notConnectedErrorMessage: options.notConnectedErrorMessage ?? 'gateway not connected',
       onSocketClose: options.onSocketClose ?? (() => false),
       requestIdPrefix: options.requestIdPrefix ?? 'r',
@@ -130,12 +162,14 @@ export class JsonRpcGatewayClient {
 
     const socket = this.options.socketFactory?.(wsUrl) ?? new WebSocket(wsUrl)
     this.socket = socket
+    this.stopHeartbeat()
 
     socket.addEventListener('message', message => {
       if (this.socket !== socket) {
         return
       }
 
+      this.lastInboundAt = Date.now()
       this.handleMessage(message.data)
     })
 
@@ -149,6 +183,7 @@ export class JsonRpcGatewayClient {
       }
 
       this.socket = null
+      this.stopHeartbeat()
       this.setState('closed')
       this.rejectAllPending(new Error(this.options.closedErrorMessage))
     })
@@ -230,9 +265,24 @@ export class JsonRpcGatewayClient {
       socket.close()
     } finally {
       this.socket = null
+      this.stopHeartbeat()
       this.setState('closed')
       this.rejectAllPending(new Error(this.options.closedErrorMessage))
     }
+  }
+
+  /**
+   * Invalidate the current socket generation after an ambiguous transport
+   * outcome. The outer connection owner decides whether/when to reconnect.
+   */
+  invalidate(message = this.options.closedErrorMessage): void {
+    const socket = this.socket
+
+    if (!socket) {
+      return
+    }
+
+    this.invalidateSocket(socket, new Error(message))
   }
 
   on<P = unknown>(type: GatewayEventName, handler: (event: GatewayEvent<P>) => void): () => void {
@@ -371,7 +421,12 @@ export class JsonRpcGatewayClient {
       this.clearPending(frame.id)
 
       if (frame.error) {
-        call.reject(new Error(frame.error.message || 'Hermes RPC failed'))
+        call.reject(
+          new JsonRpcGatewayError(frame.error.message || 'Hermes RPC failed', {
+            code: typeof frame.error.code === 'number' ? frame.error.code : undefined,
+            data: frame.error.data
+          })
+        )
       } else {
         call.resolve(frame.result)
       }
@@ -380,8 +435,79 @@ export class JsonRpcGatewayClient {
     }
 
     if (frame.method === 'event' && frame.params?.type) {
+      if (frame.params.type === 'gateway.ready' && this.gatewayReadyAdvertisesHeartbeat(frame.params.payload)) {
+        const socket = this.socket
+
+        if (socket) {
+          this.startHeartbeat(socket)
+        }
+      }
+
       this.dispatchEvent(frame.params)
     }
+  }
+
+  private gatewayReadyAdvertisesHeartbeat(payload: unknown): boolean {
+    return Boolean(payload && typeof payload === 'object' && (payload as { heartbeat?: unknown }).heartbeat === true)
+  }
+
+  private startHeartbeat(socket: WebSocketLike): void {
+    this.stopHeartbeat()
+    this.lastInboundAt = Date.now()
+
+    if (this.options.heartbeatIntervalMs <= 0 || this.options.heartbeatDeadlineMs <= 0) {
+      return
+    }
+
+    this.heartbeatTimer = setInterval(() => {
+      if (this.socket !== socket || socket.readyState !== WebSocket.OPEN) {
+        return
+      }
+
+      if (Date.now() - this.lastInboundAt >= this.options.heartbeatDeadlineMs) {
+        this.invalidateSocket(socket, new Error('WebSocket heartbeat acknowledgement timed out'))
+
+        return
+      }
+
+      try {
+        socket.send(
+          JSON.stringify({
+            jsonrpc: '2.0',
+            id: `heartbeat-${++this.heartbeatSequence}`,
+            method: 'gateway.ping',
+            params: {}
+          })
+        )
+      } catch (error) {
+        this.invalidateSocket(socket, error instanceof Error ? error : new Error(String(error)))
+      }
+    }, this.options.heartbeatIntervalMs)
+  }
+
+  private stopHeartbeat(): void {
+    if (this.heartbeatTimer !== null) {
+      clearInterval(this.heartbeatTimer)
+      this.heartbeatTimer = null
+    }
+  }
+
+  private invalidateSocket(socket: WebSocketLike, error: Error): void {
+    if (this.socket !== socket) {
+      return
+    }
+
+    this.socket = null
+    this.stopHeartbeat()
+
+    try {
+      socket.close()
+    } catch {
+      // The generation was already invalidated; the reconnect owner can redial.
+    }
+
+    this.setState('closed')
+    this.rejectAllPending(error)
   }
 
   private clearPending(id: GatewayRequestId): void {

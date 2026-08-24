@@ -8,6 +8,8 @@ import json
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from tools.file_tools import (
     PATCH_SCHEMA,
 )
@@ -310,25 +312,28 @@ class TestSearchHandler:
 class TestWindowsMsysPathResolution:
     """File tools must translate Git Bash drive paths before Path resolution."""
 
+    @pytest.mark.windows_only
     def test_absolute_msys_path_normalized_before_windows_resolve(self, monkeypatch):
-        import tools.environments.local as local_mod
+        """Windows-only: ``_resolve_path_for_task`` hands the translated path
+        to ``ntpath``/``Path``, and only a real Windows ``Path`` renders
+        ``C:\\Users\\...`` — faking ``sys.platform`` left PosixPath in place."""
         import tools.file_tools as file_tools
 
-        monkeypatch.setattr(file_tools.sys, "platform", "win32")
-        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
         monkeypatch.setattr(file_tools, "_uses_container_paths", lambda task_id="default": False)
 
         resolved = file_tools._resolve_path_for_task("/c/Users/Mark/project/app.py")
         assert str(resolved) == r"C:\Users\Mark\project\app.py"
 
 
+    @pytest.mark.windows_only
     def test_container_paths_skip_msys_translation(self, monkeypatch):
-        """WSL/docker Linux paths must not be rewritten as Windows drives."""
-        import tools.environments.local as local_mod
+        """WSL/docker Linux paths must not be rewritten as Windows drives.
+
+        Windows-only: the translation this guards against only happens when
+        the host really is Windows, so the negative is only meaningful there.
+        """
         import tools.file_tools as file_tools
 
-        monkeypatch.setattr(file_tools.sys, "platform", "win32")
-        monkeypatch.setattr(local_mod, "_IS_WINDOWS", True)
         monkeypatch.setattr(file_tools, "_uses_container_paths", lambda task_id="default": True)
         monkeypatch.setattr(
             file_tools,
@@ -501,6 +506,7 @@ class TestPatchSchemaShape:
         for name in ("path", "old_string", "new_string"):
             assert "REQUIRED when mode='replace'" in props[name]["description"]
         assert "REQUIRED when mode='patch'" in props["patch"]["description"]
+        assert "must differ from old_string" in props["new_string"]["description"]
 
     def test_no_anyof_required_stays_mode_only(self):
         # anyOf/oneOf at parameters level break Anthropic, Fireworks, and the
@@ -993,4 +999,37 @@ class TestNotFoundCache:
 
         assert _check_not_found_cache("read", "/tmp/never-exists-notify", tid) is None, (
             "notify_other_tool_call must clear cached misses"
+        )
+
+
+class TestSSHConfigWriteGateSingleQuery:
+    """Regression: the ssh-config write guard must pass
+    single_query_deny_message to _run_approval_gate (required kwarg since
+    1596148ff). Missing it raises TypeError instead of routing through the
+    approval flow — see issue #93201."""
+
+    def test_gate_call_passes_single_query_deny_message(self):
+        import inspect as _inspect
+        import re as _re
+        import tools.file_tools as ft
+
+        src = _inspect.getsource(ft)
+        idx = src.find("_approval._run_approval_gate(")
+        assert idx != -1, "ssh_config_write gate call not found"
+        block = src[idx:idx + 900]
+        assert "pattern_key=\"ssh_config_write\"" in block
+
+        from tools.approval import _run_approval_gate
+        required = [
+            name for name, param in _inspect.signature(
+                _run_approval_gate).parameters.items()
+            if param.kind == _inspect.Parameter.KEYWORD_ONLY
+            and param.default is _inspect.Parameter.empty
+        ]
+        missing = [k for k in required if not _re.search(
+            rf"\b{k}\s*=", block)]
+        assert missing == [], (
+            f"_run_approval_gate call at ssh_config_write gate is missing "
+            f"required kwargs {missing}; it would raise TypeError instead "
+            f"of showing an approval prompt"
         )

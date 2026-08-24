@@ -20,9 +20,11 @@ from cron.jobs import (
     mark_job_run,
     advance_next_run,
     claim_dispatch,
+    claim_job_for_fire,
     heartbeat_run_claim,
     get_due_jobs,
     save_job_output,
+    _hermes_now,
 )
 
 
@@ -188,6 +190,30 @@ def tmp_cron_dir(tmp_path, monkeypatch):
 
 
 class TestJobCRUD:
+    def test_cjk_and_emoji_round_trip_readable_in_jobs_json(self, tmp_cron_dir):
+        """CJK/emoji job text must round-trip AND stay human-readable on disk.
+
+        With json.dump's default ensure_ascii=True, every non-ASCII char in
+        jobs.json is written as \\uXXXX escapes, which users reported as
+        unreadable garbage when inspecting their job store (#52302, #29754).
+        ensure_ascii=False + the existing encoding="utf-8" writer keeps the
+        text literal; the utf-8-sig reader must parse it back identically.
+        """
+        name = "日次レポート 🎉 café"
+        job = create_job(prompt=f"Summarize {name}", schedule="30m", name=name)
+
+        # Round-trip through save/load is lossless.
+        fetched = get_job(job["id"])
+        assert fetched["name"] == name
+        assert name in fetched["prompt"]
+
+        # On-disk representation is literal UTF-8, not \uXXXX escapes.
+        from cron.jobs import JOBS_FILE
+        raw = JOBS_FILE.read_text(encoding="utf-8")
+        assert "日次レポート" in raw
+        assert "🎉" in raw
+        assert "\\u65e5" not in raw
+
     def test_create_and_get(self, tmp_cron_dir):
         job = create_job(prompt="Check server status", schedule="30m")
         assert job["id"]
@@ -260,7 +286,85 @@ class TestPauseResumeJob:
         assert paused["enabled"] is False
         assert paused["state"] == "paused"
         assert paused["paused_reason"] == "user paused"
+        assert paused.get("paused_at")
 
+    def test_pause_is_authoritative_due_jobs_do_not_fire(self, tmp_cron_dir):
+        """Behavioural invariant: after pause, a past-due job must not be due.
+
+        Checks that last_run_at cannot advance via the scheduler path — not
+        merely that pause() returned success. Regression for the 07-30 outage
+        where state=paused coexisted with enabled=true and jobs kept firing.
+        """
+        job = create_job(prompt="Must not fire while paused", schedule="every 1h")
+        past = (_hermes_now() - timedelta(hours=2)).isoformat()
+        # Force the job overdue, then pause.
+        updated = update_job(job["id"], {"next_run_at": past})
+        assert updated["enabled"] is True
+        assert job["id"] in {j["id"] for j in get_due_jobs()}
+
+        paused = pause_job(job["id"], reason="outage freeze")
+        assert paused["enabled"] is False
+        assert paused["state"] == "paused"
+        assert paused.get("paused_at")
+        # Scheduler-honoured flag and pause markers must never contradict.
+        assert not (paused.get("enabled") and paused.get("paused_at"))
+
+        due_ids = {j["id"] for j in get_due_jobs()}
+        assert job["id"] not in due_ids
+
+        before = get_job(job["id"])
+        assert before["last_run_at"] is None or before["last_run_at"] == job.get("last_run_at")
+        # claim path also closed
+        assert claim_job_for_fire(job["id"]) is False
+        after = get_job(job["id"])
+        assert after["last_run_at"] == before.get("last_run_at")
+        assert after["enabled"] is False
+
+    def test_contradictory_half_pause_self_disables_and_does_not_fire(self, tmp_cron_dir):
+        """enabled=true + paused_at must not fire; scan heals enabled=false."""
+        now = _hermes_now()
+        job = {
+            "id": "half-paused-1",
+            "name": "half-paused",
+            "prompt": "should never run",
+            "schedule": {"kind": "interval", "minutes": 5, "display": "every 5m"},
+            "schedule_display": "every 5m",
+            "repeat": {"times": None, "completed": 0},
+            # The contradiction from the 07-30 outage:
+            "enabled": True,
+            "state": "paused",
+            "paused_at": (now - timedelta(hours=20)).isoformat(),
+            "paused_reason": "operator thought this was frozen",
+            "next_run_at": (now - timedelta(hours=1)).isoformat(),
+            "last_run_at": None,
+            "last_status": None,
+            "last_error": None,
+            "last_delivery_error": None,
+            "created_at": (now - timedelta(days=1)).isoformat(),
+            "deliver": "local",
+        }
+        save_jobs([job])
+
+        # Display must NOT say paused while enabled (honest list).
+        from cron.jobs import effective_job_state, list_jobs
+
+        assert effective_job_state(job) == "scheduled"
+        listed = {j["id"]: j for j in list_jobs(include_disabled=True)}
+        # Honest list: enabled=true half-pause must not render as paused.
+        assert listed["half-paused-1"]["enabled"] is True
+        assert listed["half-paused-1"]["state"] != "paused"
+
+        assert claim_job_for_fire("half-paused-1") is False
+        due = get_due_jobs()
+        assert "half-paused-1" not in {j["id"] for j in due}
+
+        healed = get_job("half-paused-1")
+        assert healed is not None
+        assert healed["enabled"] is False
+        assert healed["state"] == "paused"
+        assert healed.get("paused_at")
+        # Still not due after heal
+        assert "half-paused-1" not in {j["id"] for j in get_due_jobs()}
 
     def test_resume_rejects_past_oneshot(self, tmp_cron_dir, monkeypatch):
         """Resuming a paused one-shot whose time is now in the past must raise
@@ -379,6 +483,34 @@ class TestMarkJobRun:
         assert updated["last_status"] == "ok"
         assert updated["last_error"] is None
         assert updated["last_delivery_error"] == "platform 'telegram' not configured"
+
+    def test_failure_streak_increments_and_resets(self, tmp_cron_dir):
+        """failure_streak counts consecutive agent failures; success resets."""
+        job = create_job(prompt="Flaky", schedule="every 1h")
+        assert get_job(job["id"])["failure_streak"] == 0
+        mark_job_run(job["id"], success=False, error="timeout")
+        mark_job_run(job["id"], success=False, error="timeout")
+        assert get_job(job["id"])["failure_streak"] == 2
+        mark_job_run(job["id"], success=True)
+        assert get_job(job["id"])["failure_streak"] == 0
+
+    def test_failure_streak_ignores_delivery_errors(self, tmp_cron_dir):
+        """A successful run with a delivery error must not count as a failure."""
+        job = create_job(prompt="Report", schedule="every 1h")
+        mark_job_run(job["id"], success=False, error="timeout")
+        mark_job_run(job["id"], success=True, delivery_error="send failed: 502")
+        assert get_job(job["id"])["failure_streak"] == 0
+
+    def test_failure_streak_backcompat_missing_field(self, tmp_cron_dir):
+        """Jobs persisted before the field existed increment from 0."""
+        job = create_job(prompt="Old", schedule="every 1h")
+        # Simulate a pre-field record on disk.
+        jobs = load_jobs()
+        for j in jobs:
+            j.pop("failure_streak", None)
+        save_jobs(jobs)
+        mark_job_run(job["id"], success=False, error="boom")
+        assert get_job(job["id"])["failure_streak"] == 1
 
 
     def test_recurring_cron_not_disabled_when_croniter_missing(self, tmp_cron_dir, monkeypatch):
@@ -1057,6 +1189,50 @@ class TestLateEnvRepointScopesStore:
 # UTF-8 BOM on jobs.json (Windows Notepad / PowerShell 5.1)
 # =========================================================================
 
+class TestJobsJsonShapes:
+    def test_load_jobs_normalizes_id_keyed_jobs_mapping(self, tmp_cron_dir):
+        import json
+        from cron.jobs import JOBS_FILE
+
+        job_a = {
+            "id": "cron1234abcd",
+            "name": "daily briefing",
+            "enabled": True,
+            "prompt": "Summarize overnight incidents",
+            "schedule": {"kind": "interval", "minutes": 1440, "display": "every 24h"},
+        }
+        job_b = {
+            "id": "cron5678efgh",
+            "name": "disabled cleanup",
+            "enabled": False,
+            "prompt": "Clean stale scratch files",
+            "schedule": {"kind": "once", "run_at": "2030-01-15T14:00:00+00:00"},
+        }
+        payload = {
+            "jobs": {
+                job_a["id"]: job_a,
+                job_b["id"]: job_b,
+            },
+            "updated_at": "2026-08-23T00:00:00+00:00",
+        }
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        loaded = load_jobs()
+        assert isinstance(loaded, list)
+        assert {job["id"] for job in loaded} == {job_a["id"], job_b["id"]}
+
+        listed = {job["id"]: job for job in list_jobs(include_disabled=True)}
+        assert set(listed) == {job_a["id"], job_b["id"]}
+        for expected in (job_a, job_b):
+            actual = listed[expected["id"]]
+            assert actual["id"] == expected["id"]
+            assert actual["name"] == expected["name"]
+            assert actual["prompt"] == expected["prompt"]
+            assert actual["schedule"] == expected["schedule"]
+            assert actual["enabled"] is expected["enabled"]
+
+
 class TestJobsJsonUtf8Bom:
     """jobs.json readers must accept a leading UTF-8 BOM.
 
@@ -1111,6 +1287,185 @@ class TestJobsJsonUtf8Bom:
 
         loaded = load_jobs()
         assert [j["id"] for j in loaded] == ["plainjob01"]
+
+
+
+
+# =========================================================================
+# ID-keyed jobs map on jobs.json (external tools / hand edits) — #92935
+# =========================================================================
+
+class TestJobsJsonIdKeyedMap:
+    """load_jobs() must flatten an ID-keyed ``jobs`` map to the list contract.
+
+    A store written as ``{"jobs": {"<job_id>": {...}, ...}}`` (external tool
+    or hand edit — Hermes' own save_jobs() only ever writes a list) made
+    load_jobs() return a dict. Every consumer iterates it as a list, so
+    ``list_jobs()`` → ``_normalize_job_record`` → ``dict(<id-string>)`` raised
+    ``ValueError: dictionary update sequence element #0 has length 1; 2 is
+    required`` and took down ``hermes cron list``, the ``cronjob(action=
+    "list")`` tool, and the Dashboard cron view. The values already carry
+    their own ``id`` matching the map key, so flattening is lossless.
+    """
+
+    _ID_KEYED = {
+        "jobs": {
+            "cron1234abcd": {
+                "id": "cron1234abcd",
+                "name": "Example job",
+                "enabled": True,
+                "prompt": "do a thing",
+                "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+            },
+            "cron5678efgh": {
+                "id": "cron5678efgh",
+                "name": "Second job",
+                "enabled": True,
+                "prompt": "do another",
+                "schedule": {"kind": "interval", "minutes": 30, "display": "every 30m"},
+            },
+        },
+        "updated_at": "2026-08-23T10:10:12+08:00",
+    }
+
+    def test_load_jobs_flattens_id_keyed_map(self, tmp_cron_dir):
+        """The pre-fix repro: load_jobs() returns a list, not the raw dict."""
+        import json
+        from cron.jobs import JOBS_FILE, load_jobs
+
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(self._ID_KEYED), encoding="utf-8")
+
+        loaded = load_jobs()
+        assert isinstance(loaded, list)
+        assert {j["id"] for j in loaded} == {"cron1234abcd", "cron5678efgh"}
+        assert all(isinstance(j, dict) for j in loaded)
+
+    def test_list_jobs_survives_id_keyed_map(self, tmp_cron_dir):
+        """The reported traceback path (hermes cron list / cronjob list tool)."""
+        import json
+        from cron.jobs import JOBS_FILE, list_jobs
+
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(self._ID_KEYED), encoding="utf-8")
+
+        # Pre-fix this raised ValueError from _normalize_job_record(dict(<str>)).
+        jobs = list_jobs(include_disabled=True)
+        assert {j["id"] for j in jobs} == {"cron1234abcd", "cron5678efgh"}
+
+    def test_id_keyed_map_repaired_to_list_on_disk(self, tmp_cron_dir):
+        """Loading rewrites the store into the canonical {"jobs": [...]} form."""
+        import json
+        from cron.jobs import JOBS_FILE, load_jobs
+
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(self._ID_KEYED), encoding="utf-8")
+
+        load_jobs()
+
+        on_disk = json.loads(JOBS_FILE.read_text(encoding="utf-8"))
+        assert isinstance(on_disk["jobs"], list)
+        assert {j["id"] for j in on_disk["jobs"]} == {"cron1234abcd", "cron5678efgh"}
+
+        # A second load reads the repaired list unchanged (idempotent).
+        reloaded = load_jobs()
+        assert {j["id"] for j in reloaded} == {"cron1234abcd", "cron5678efgh"}
+
+    def test_empty_id_keyed_map_returns_empty_list(self, tmp_cron_dir):
+        """An empty ``jobs`` map must not crash and yields no jobs."""
+        import json
+        from cron.jobs import JOBS_FILE, load_jobs
+
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps({"jobs": {}}), encoding="utf-8")
+
+        assert load_jobs() == []
+
+    def test_map_value_without_inline_id_adopts_key(self, tmp_cron_dir):
+        """A value lacking an inline "id" gets the map key as its id."""
+        import json
+        from cron.jobs import JOBS_FILE, load_jobs
+
+        payload = {
+            "jobs": {
+                "cronkeyonly1": {
+                    "name": "keyed only",
+                    "enabled": True,
+                    "prompt": "no inline id here",
+                    "schedule": {"kind": "interval", "minutes": 15, "display": "every 15m"},
+                },
+                "cron-ignored-key": {
+                    "id": "croninline99",
+                    "name": "inline id wins",
+                    "enabled": True,
+                    "prompt": "inline id present",
+                    "schedule": {"kind": "interval", "minutes": 5, "display": "every 5m"},
+                },
+            }
+        }
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        loaded = {j["id"]: j for j in load_jobs()}
+        # Key adopted when the value has no inline id.
+        assert "cronkeyonly1" in loaded
+        assert loaded["cronkeyonly1"]["name"] == "keyed only"
+        # Inline id wins over a differing map key.
+        assert "croninline99" in loaded
+        assert "cron-ignored-key" not in loaded
+
+        # Self-heal persisted the id-merged records.
+        on_disk = json.loads(JOBS_FILE.read_text(encoding="utf-8"))
+        assert isinstance(on_disk["jobs"], list)
+        assert {j["id"] for j in on_disk["jobs"]} == {"cronkeyonly1", "croninline99"}
+
+    def test_non_dict_map_values_skipped_with_warning(self, tmp_cron_dir, caplog):
+        """Junk (non-dict) values in the map are skipped, never crash."""
+        import json
+        import logging
+        from cron.jobs import JOBS_FILE, list_jobs, load_jobs
+
+        payload = {
+            "jobs": {
+                "goodjob1": {
+                    "name": "survivor",
+                    "enabled": True,
+                    "prompt": "keep me",
+                    "schedule": {"kind": "interval", "minutes": 60, "display": "every 60m"},
+                },
+                "junk-string": "i am not a job",
+                "junk-number": 42,
+                "junk-null": None,
+            }
+        }
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(json.dumps(payload), encoding="utf-8")
+
+        with caplog.at_level(logging.WARNING, logger="cron.jobs"):
+            loaded = load_jobs()
+        assert [j["id"] for j in loaded] == ["goodjob1"]
+        assert any("non-dict" in rec.getMessage() for rec in caplog.records)
+
+        # The reported traceback path also survives the junk.
+        jobs = list_jobs(include_disabled=True)
+        assert {j["id"] for j in jobs} == {"goodjob1"}
+
+        # Self-heal wrote only the valid record, canonical list shape.
+        on_disk = json.loads(JOBS_FILE.read_text(encoding="utf-8"))
+        assert isinstance(on_disk["jobs"], list)
+        assert [j["id"] for j in on_disk["jobs"]] == ["goodjob1"]
+
+    def test_all_junk_map_values_yield_empty_list(self, tmp_cron_dir):
+        """A map of only junk values flattens to [] without crashing."""
+        import json
+        from cron.jobs import JOBS_FILE, load_jobs
+
+        JOBS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        JOBS_FILE.write_text(
+            json.dumps({"jobs": {"a": "junk", "b": 1}}), encoding="utf-8"
+        )
+
+        assert load_jobs() == []
 
 
 
