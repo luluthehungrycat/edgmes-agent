@@ -73,7 +73,15 @@ def classify_paths(paths: Sequence[str], root: Path = DEFAULT_ROOT) -> tuple[tup
 
 def git(root: Path, *args: str) -> str:
     command = ["git", *args]
-    result = subprocess.run(command, cwd=root, check=False, text=True, capture_output=True)
+    result = subprocess.run(
+        command,
+        cwd=root,
+        check=False,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+    )
     if result.returncode:
         details = [
             f"git command failed with exit code {result.returncode}: {' '.join(command)}"
