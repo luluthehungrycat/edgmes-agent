@@ -23,6 +23,10 @@ The default run makes 24 requests: six cases at each of four artificial context
 levels. Use `--case-limit 1` for a connectivity smoke test. The report records
 model, context level, latency, prompt/response size, parsed plan, and failures.
 
+The requested level is a total context budget. The harness reserves 2,048
+tokens for output plus a 256-token prompt overhead, so the 64k request remains
+within a model advertising a 65,536-token context window.
+
 The context is deliberately synthetic and approximately four characters per
 token. It tests prompt-budget behavior; it is not a tokenizer-accurate claim.
 

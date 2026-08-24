@@ -22,6 +22,8 @@ from urllib.request import Request, urlopen
 
 DEFAULT_MODEL = "liquid/lfm-2.5-2.6b:free"
 DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
+OUTPUT_RESERVE_TOKENS = 2_048
+PROMPT_OVERHEAD_TOKENS = 256
 DEFAULT_LEVELS = (16_000, 32_000, 48_000, 64_000)
 CASES = (
     ("inspect-project", "inspect", "Inspect the project without changing files."),
@@ -65,7 +67,8 @@ class OpenRouterClient:
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 384,
+            "max_tokens": 2048,
+            "reasoning": {"effort": "low"},
         }).encode("utf-8")
         request = Request(
             f"{self.base_url}/chat/completions",
@@ -97,7 +100,8 @@ class OpenRouterClient:
 
 
 def _fixture_context(context_tokens: int) -> str:
-    target_chars = context_tokens * 4
+    target_tokens = max(1, context_tokens - OUTPUT_RESERVE_TOKENS - PROMPT_OVERHEAD_TOKENS)
+    target_chars = target_tokens * 4
     seed = (
         "FIXTURE FACT: README.md identifies an Edgmes verification fixture.\n"
         "FIXTURE FACT: service.py sets HEALTHY = True then exits 1.\n"
