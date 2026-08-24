@@ -3,6 +3,7 @@
 - [x] 1.1 Merge current `upstream/main` into an isolated synchronization worktree based on the merged downstream `main` and record the exact upstream and merge-base SHAs.
 - [x] 1.2 Resolve `scripts/ci/classify_changes.py` by preserving Edgmes routing and upstream Docker, Nix, lockfile, installer, Rust, frontend, site, scan, dependency, MCP, and review lanes.
 - [x] 1.3 Resolve `tests/ci/test_classify_changes.py` into a behavior matrix covering Edgmes paths, upstream-only paths, combined paths, and empty/`.github/` fallback.
+- [x] 1.4 Update the contributor attribution boundary so imported upstream history is excluded while downstream sync commits remain checked.
 
 ## 2. Validation
 
@@ -12,6 +13,7 @@
 
 > Current evidence for 2.3: collection completes with 38,491 selected tests, but the full run does not complete reliably on this VPS. The first isolated failure is the upstream `tests/agent/test_auxiliary_explicit_cancellation.py::test_cancelled_codex_orphan_timeout_preserves_cached_shared_client`, which failed twice and passed once in three serial reruns. A later E2E path also emitted repeated temporary-log-directory `FileNotFoundError` failures. Neither path is touched by this conflict-resolution change.
 - [x] 2.4 Confirm the synchronization worktree is clean, has no conflict markers, and contains only the validated merge result.
+- [x] 2.5 Add regression coverage for ordinary branches, sync branches, and downstream commits after an upstream merge.
 
 ## 3. Reviewable publication
 

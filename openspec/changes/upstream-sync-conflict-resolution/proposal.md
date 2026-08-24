@@ -14,6 +14,7 @@ The first post-merge upstream synchronization attempt exposed a real merge confl
 ### New Capabilities
 
 - `upstream-ci-classification`: Preserve and validate the combined downstream/upstream CI lane classification contract during synchronization.
+- `upstream-contributor-attribution`: Check downstream-authored sync commits without treating imported upstream history as new downstream contributions.
 
 ### Modified Capabilities
 

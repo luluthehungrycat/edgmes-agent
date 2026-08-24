@@ -27,8 +27,23 @@ jobs:
           # Get the merge base between this PR and main
           MERGE_BASE=$(git merge-base origin/main HEAD)
 
-          # Find any new author emails in this PR's commits
-          NEW_EMAILS=$(git log ${MERGE_BASE}..HEAD --format='%ae' --no-merges | sort -u)
+          # Find any new author emails in this PR's commits. A downstream
+          # synchronization branch intentionally contains thousands of
+          # upstream commits; those authors are not new downstream
+          # contributions and must not be re-mapped here.
+          SYNC_MERGE=""
+          case "${GITHUB_HEAD_REF:-}" in
+            sync/upstream-*|feat/upstream-sync-*)
+              SYNC_MERGE=$(git log "${MERGE_BASE}..HEAD" --merges --format='%H' -1)
+              ;;
+          esac
+          if [ -n "$SYNC_MERGE" ]; then
+            UPSTREAM_PARENT=$(git rev-parse "${SYNC_MERGE}^2")
+            NEW_EMAILS=$(git log "${MERGE_BASE}..HEAD" --not "$UPSTREAM_PARENT" \
+              --format='%ae' --no-merges | sort -u)
+          else
+            NEW_EMAILS=$(git log "${MERGE_BASE}..HEAD" --format='%ae' --no-merges | sort -u)
+          fi
 
           if [ -z "$NEW_EMAILS" ]; then
             echo "No new commits to check."
@@ -44,7 +59,7 @@ jobs:
           while IFS= read -r email; do
             # Skip teknium and bot emails
             case "$email" in
-              *teknium*|*noreply@github.com*|*dependabot*|*github-actions*|*anthropic.com*|*cursor.com*)
+              *teknium*|*noreply@github.com*|*\[bot\]@users.noreply.github.com|*dependabot*|*github-actions*|*anthropic.com*|*cursor.com*)
                 continue ;;
             esac
 
