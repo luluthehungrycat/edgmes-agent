@@ -1,4 +1,5 @@
 from dataclasses import FrozenInstanceError
+import json
 
 import pytest
 
@@ -45,11 +46,11 @@ def test_selector_prioritizes_mandatory_verified_and_priority_items() -> None:
             entry("verified", "verified", priority=1, verified=True, recency=1),
             entry("request", "request", mandatory=True, category="current_request"),
         ],
-        budget=15,
+        budget=46,
     )
 
     assert tuple(item.entry_id for item in result.selected) == ("request", "verified")
-    assert result.serialized_size == 15
+    assert result.serialized_size == 46
     assert result.omitted == ("stale",)
 
 
@@ -74,3 +75,22 @@ def test_ledger_entries_are_immutable() -> None:
     value = entry("fact", "A fact")
     with pytest.raises(FrozenInstanceError):
         value.content = "changed"  # type: ignore[misc]
+
+
+def test_ledger_round_trips_through_versioned_json(tmp_path) -> None:
+    original = StateLedger((entry("fact", "A verified fact", verified=True),))
+    path = tmp_path / "state" / "ledger.json"
+
+    original.save(path)
+    restored = StateLedger.load(path)
+
+    assert restored == original
+    assert json.loads(path.read_text(encoding="utf-8"))["format_version"] == 1
+
+
+def test_ledger_rejects_malformed_persisted_data(tmp_path) -> None:
+    path = tmp_path / "ledger.json"
+    path.write_text('{"format_version": 1, "entries": [{"entry_id": "x"}]}', encoding="utf-8")
+
+    with pytest.raises(LedgerError):
+        StateLedger.load(path)

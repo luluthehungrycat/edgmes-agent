@@ -3,6 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
+import os
+from pathlib import Path
+import tempfile
 from types import MappingProxyType
 from typing import Iterable, Mapping
 
@@ -104,6 +108,83 @@ class StateLedger:
             raise LedgerError(f"duplicate ledger entry: {entry.entry_id}")
         return StateLedger(self.entries + (entry,))
 
+    def as_dict(self) -> dict[str, object]:
+        """Return the versioned, JSON-safe persistence representation."""
+
+        return {
+            "format_version": 1,
+            "entries": [
+                {
+                    "entry_id": item.entry_id,
+                    "category": item.category,
+                    "content": item.content,
+                    "priority": item.priority,
+                    "recency": item.recency,
+                    "verified": item.verified,
+                    "mandatory": item.mandatory,
+                    "metadata": dict(item.metadata),
+                }
+                for item in self.entries
+            ],
+        }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, object]) -> "StateLedger":
+        """Validate and construct a ledger from persisted JSON data."""
+
+        entries_value = value.get("entries")
+        if value.get("format_version") != 1 or not isinstance(entries_value, list):
+            raise LedgerError("unsupported or malformed ledger format")
+        entries: list[LedgerEntry] = []
+        for raw in entries_value:
+            if not isinstance(raw, Mapping):
+                raise LedgerError("ledger entry must be an object")
+            try:
+                entries.append(
+                    LedgerEntry(
+                        entry_id=raw["entry_id"],
+                        category=raw["category"],
+                        content=raw["content"],
+                        priority=raw.get("priority", 0),
+                        recency=raw.get("recency", 0),
+                        verified=raw.get("verified", False),
+                        mandatory=raw.get("mandatory", False),
+                        metadata=raw.get("metadata", {}),
+                    )
+                )
+            except (AttributeError, KeyError, TypeError, ValueError) as exc:
+                raise LedgerError("malformed ledger entry") from exc
+        return cls(tuple(entries))
+
+    def save(self, path: str | Path) -> None:
+        """Atomically persist this snapshot as JSON."""
+
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=f".{destination.name}.", dir=destination.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(self.as_dict(), handle, ensure_ascii=False, sort_keys=True)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, destination)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "StateLedger":
+        """Load and validate a persisted snapshot."""
+
+        try:
+            value = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise LedgerError("unable to load ledger") from exc
+        if not isinstance(value, Mapping):
+            raise LedgerError("ledger root must be an object")
+        return cls.from_dict(value)
+
 
 @dataclass(frozen=True)
 class ContextProjection:
@@ -115,7 +196,15 @@ class ContextProjection:
 
     @property
     def serialized_size(self) -> int:
-        return sum(len(item.content) for item in self.selected)
+        return len(self.rendered_text)
+
+    @property
+    def rendered_text(self) -> str:
+        return "\n\n".join(f"[{item.category}]\n{item.content}" for item in self.selected)
+
+
+def _rendered_entry_size(item: LedgerEntry) -> int:
+    return len(f"[{item.category}]\n{item.content}")
 
 
 def select_bounded_context(
@@ -145,7 +234,7 @@ def select_bounded_context(
     omitted: list[str] = []
     size = 0
     for item in ranked:
-        next_size = size + len(item.content)
+        next_size = size + _rendered_entry_size(item) + (2 if selected else 0)
         if next_size <= budget:
             selected.append(item)
             size = next_size

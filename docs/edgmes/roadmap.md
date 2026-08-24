@@ -53,8 +53,8 @@ without modifying upstream runtime behavior.
 
 ### 1. Capability profiles
 
-**Status:** model capability contracts and pure tool/context resolver complete;
-profile presets and runtime integration remain.
+**Status:** named profile presets, policy enforcement, and runtime integration
+complete; observed model metadata and adaptive routing remain.
 
 Implemented under `edgmes/capabilities.py`:
 
@@ -66,15 +66,14 @@ Implemented under `edgmes/capabilities.py`:
 - optional-tool filtering;
 - deterministic structured policy decisions.
 
-The resolver is intentionally not wired into the inherited conversation loop yet.
-Initial named presets (`nano`, `small`, `medium-edge`, `full`), retry/delegation/
-parallelism policy, compression policy, and observed model metadata remain part of
-runtime integration work.
+The bounded Edgmes runtime resolves an explicit request profile before backend
+invocation and exposes the catalog through its CLI. Retry/delegation/parallelism
+policy, compression policy, and observed model metadata remain later work.
 
 ### 2. Bounded context and state ledger
 
-**Status:** structured ledger and deterministic bounded selector complete;
-edge-runtime integration remains.
+**Status:** structured ledger, deterministic bounded selector, JSON persistence,
+and edge-runtime integration complete; tokenizer-aware budgeting remains.
 
 Implemented under `edgmes/ledger.py`:
 
@@ -86,8 +85,8 @@ Implemented under `edgmes/ledger.py`:
 - whole-entry greedy packing under a character budget;
 - mandatory current-request handling and omission reporting.
 
-Raw Hermes transcript persistence remains untouched. Tokenizer-aware budgeting,
-deterministic compaction, and runtime integration remain next-stage work.
+Raw Hermes transcript persistence remains untouched. Tokenizer-aware budgeting
+and deterministic compaction remain next-stage work.
 
 ### 3. Edge tool policy and runtime
 
@@ -111,7 +110,12 @@ was not used as a fallback.
 
 ### 4. Verification benchmark
 
-Create a small reproducible benchmark covering:
+**Status:** deterministic isolated six-case harness complete; live model planning
+executor and comparative runs are now implemented, with live execution and
+model-quality conclusions still separate work.
+
+The versioned harness is `scripts/benchmarks/verification_benchmark.py` and its
+usage is documented in `docs/edgmes/verification-benchmark.md`. It covers:
 
 1. inspect a project
 2. diagnose a service
@@ -120,8 +124,10 @@ Create a small reproducible benchmark covering:
 5. recover from a failed command
 6. perform a safe multi-step system task
 
-Measure completion, unnecessary/invalid tool calls, context growth, recovery,
-verification, latency, and destructive-action avoidance.
+It reports completion, unnecessary/invalid tool calls, context growth, recovery,
+verification, latency, and destructive-action avoidance in JSON. The default
+fixture executor is deterministic and offline; its results are a safety and
+plumbing baseline, not a model-quality claim.
 
 ### 5. Packaging and synchronization
 

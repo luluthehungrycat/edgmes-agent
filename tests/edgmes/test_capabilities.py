@@ -9,6 +9,7 @@ from edgmes.capabilities import (
     PolicyRequest,
     UnknownCapabilityProfileError,
     resolve_tool_context_policy,
+    default_capability_registry,
 )
 
 
@@ -115,3 +116,11 @@ def test_registry_is_a_snapshot_and_unknown_profiles_fail_closed() -> None:
     assert registry.catalog()[0]["permitted_tools"] == ("read_file", "run_tests")
     with pytest.raises(UnknownCapabilityProfileError):
         registry.get("unknown")
+
+
+def test_default_registry_contains_named_edge_presets() -> None:
+    registry = default_capability_registry()
+
+    assert {profile.id for profile in registry} == {"nano", "small", "medium-edge", "full", "edge-small"}
+    assert registry.get("full").allow_mutation is True
+    assert registry.get("nano").permitted_tools == frozenset()
