@@ -20,6 +20,9 @@ The proposal describes the motivation. The current downstream `main` contains Ed
 
 ## Decisions
 
+### Large synchronization branches fail open
+
+The detect-changes action will recognize synchronization branch prefixes before calling the GitHub compare API and will pass an empty path set to the classifier. Empty input already has the conservative all-lanes behavior, so this avoids an unreliable large-diff API call without weakening validation.
 ### Attribution boundary for imported upstream history
 
 The attribution check will restrict this special handling to synchronization branch names (`sync/upstream-*` or `feat/upstream-sync-*`), select the latest merge commit on that branch, and exclude commits reachable from its second parent. This keeps downstream commits in the check and avoids relying on email-to-GitHub identity guesses for thousands of upstream authors.

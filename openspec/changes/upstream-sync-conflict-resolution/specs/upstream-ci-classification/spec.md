@@ -23,6 +23,15 @@ The synchronization result MUST retain all downstream Edgmes lane decisions and 
 - **WHEN** a synchronized change contains a Nix path or flake file
 - **THEN** the classifier marks the Nix lane and does not incorrectly require Python lanes solely because the file is Nix-specific
 
+### Requirement: Large synchronization branches bypass compare narrowing
+
+The CI classifier MUST bypass compare-API file narrowing for synchronization branch names and provide an empty path set so every validation lane is enabled.
+
+#### Scenario: Large synchronization branch fails open
+
+- **WHEN** CI classifies a pull request whose head branch matches `sync/upstream-*` or `feat/upstream-sync-*`
+- **THEN** it skips compare-API file narrowing, marks the lane input as empty, and the classifier enables every general validation lane while leaving the explicitly scoped MCP catalog lane false
+
 ### Requirement: Broad CI changes fail closed to broad validation
 
 The classifier MUST mark the broad safety lanes when the changed path set is empty or contains `.github/` workflow or action files, including the combined upstream and downstream lane keys.
