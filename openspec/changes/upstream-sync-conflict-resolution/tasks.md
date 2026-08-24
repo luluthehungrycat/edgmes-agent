@@ -9,10 +9,12 @@
 - [x] 2.1 Run the classifier-focused tests and confirm every combined lane assertion passes.
 - [x] 2.2 Run the Edgmes boundary checks, focused Edgmes tests, compilation, and changed-file lint.
 - [ ] 2.3 Run the canonical available repository test suite and classify any unrelated or baseline failures without masking them.
+
+> Current evidence for 2.3: collection completes with 38,491 selected tests, but the full run does not complete reliably on this VPS. The first isolated failure is the upstream `tests/agent/test_auxiliary_explicit_cancellation.py::test_cancelled_codex_orphan_timeout_preserves_cached_shared_client`, which failed twice and passed once in three serial reruns. A later E2E path also emitted repeated temporary-log-directory `FileNotFoundError` failures. Neither path is touched by this conflict-resolution change.
 - [x] 2.4 Confirm the synchronization worktree is clean, has no conflict markers, and contains only the validated merge result.
 
 ## 3. Reviewable publication
 
-- [ ] 3.1 Push the validated synchronization branch from the exact merged downstream base.
-- [ ] 3.2 Open or update the upstream synchronization PR with the upstream SHA, merge base, risk classification, conflict-resolution summary, and validation evidence.
+- [x] 3.1 Push the validated synchronization branch from the exact merged downstream base.
+- [x] 3.2 Open or update the upstream synchronization PR with the upstream SHA, merge base, risk classification, conflict-resolution summary, and validation evidence.
 - [ ] 3.3 Run fresh exact-head review and required CI; do not merge until blockers are resolved and all required checks pass.
