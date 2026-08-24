@@ -110,8 +110,9 @@ was not used as a fallback.
 
 ### 4. Verification benchmark
 
-**Status:** deterministic isolated six-case harness complete; live local-model
-executor integration and comparative runs remain.
+**Status:** deterministic isolated six-case harness complete; live model planning
+executor and comparative runs are now implemented, with live execution and
+model-quality conclusions still separate work.
 
 The versioned harness is `scripts/benchmarks/verification_benchmark.py` and its
 usage is documented in `docs/edgmes/verification-benchmark.md`. It covers:

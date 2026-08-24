@@ -66,6 +66,28 @@ def test_manifest_and_lockfile_changes_are_protected() -> None:
     assert risk == "high"
 
 
+def test_git_error_includes_command_and_stderr(monkeypatch, tmp_path: Path) -> None:
+    import subprocess
+
+    def fake_run(*args, **kwargs):
+        return subprocess.CompletedProcess(
+            args[0], 128, stdout="merge output", stderr="CONFLICT (content): merge failed"
+        )
+
+    monkeypatch.setattr(MODULE.subprocess, "run", fake_run)
+
+    try:
+        MODULE.git(tmp_path, "merge", "upstream/main")
+    except RuntimeError as exc:
+        message = str(exc)
+    else:
+        raise AssertionError("expected git failure")
+
+    assert "git merge upstream/main" in message
+    assert "exit code 128" in message
+    assert "CONFLICT (content): merge failed" in message
+
+
 def test_classify_paths_uses_selected_manifest_root(tmp_path: Path) -> None:
     (tmp_path / "pyproject.toml").write_text(
         '[tool.setuptools.packages.find]\ninclude = ["edgmes", "edgmes.*", "new_runtime", "new_runtime.*"]\n',
