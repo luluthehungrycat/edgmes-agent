@@ -10,6 +10,8 @@ you are about to push:
 
 Logic (kept in sync with contributor-check.yml):
   - scans ``git log $(git merge-base origin/main HEAD)..HEAD --format=%ae``
+  - on a synchronization branch, excludes commits reachable from the second
+    parent of ``chore(sync): merge upstream/main into Edgmes``
   - skips teknium/bot emails and ``<id>+<login>@users.noreply.github.com``
     (CI auto-resolves those)
   - everything else must have ``contributors/emails/<email>`` or a legacy
@@ -40,6 +42,7 @@ SKIP_SUBSTRINGS = (
     "github-actions",
     "anthropic.com",
     "cursor.com",
+    "[bot]@users.noreply.github.com",
 )
 ID_NOREPLY_RE = re.compile(r"\d+\+.+@users\.noreply\.github\.com$")
 BARE_NOREPLY_RE = re.compile(r"^([A-Za-z0-9](?:[A-Za-z0-9]|-(?=[A-Za-z0-9])){0,38})@users\.noreply\.github\.com$")
@@ -57,7 +60,36 @@ def run(*args: str, check: bool = True) -> str:
 
 def new_emails() -> list[str]:
     base = run("git", "merge-base", "origin/main", "HEAD")
-    log = run("git", "log", f"{base}..HEAD", "--format=%ae", "--no-merges", check=False)
+    branch = run("git", "branch", "--show-current", check=False)
+    sync_branch = branch.startswith(("sync/upstream-", "feat/upstream-sync-"))
+    sync_merge = (
+        run(
+            "git",
+            "log",
+            f"{base}..HEAD",
+            "--merges",
+            "--grep=^chore(sync):.*upstream",
+            "--format=%H",
+            "-1",
+            check=False,
+        )
+        if sync_branch
+        else ""
+    )
+    if sync_merge:
+        upstream_parent = run("git", "rev-parse", f"{sync_merge}^2")
+        log = run(
+            "git",
+            "log",
+            f"{base}..HEAD",
+            "--not",
+            upstream_parent,
+            "--format=%ae",
+            "--no-merges",
+            check=False,
+        )
+    else:
+        log = run("git", "log", f"{base}..HEAD", "--format=%ae", "--no-merges", check=False)
     return sorted({e for e in log.splitlines() if e.strip()})
 
 

@@ -27,6 +27,12 @@ outputs:
   docker_meta:
     description: Docker setup and meta files have changed.
     value: ${{ steps.classify.outputs.docker_meta }}
+  docker:
+    description: Files included in the docker image have changed.
+    value: ${{ steps.classify.outputs.docker }}
+  nix:
+    description: Run `nix flake check` (flake inputs, or any product Python change).
+    value: ${{ steps.classify.outputs.nix }}
   site:
     description: Build the Docusaurus docs site.
     value: ${{ steps.classify.outputs.site }}
@@ -36,9 +42,18 @@ outputs:
   deps:
     description: Check pyproject.toml dependency upper bounds.
     value: ${{ steps.classify.outputs.deps }}
+  uv_lock:
+    description: Run `uv lock --check` (pyproject.toml / uv.lock changes only).
+    value: ${{ steps.classify.outputs.uv_lock }}
   npm_lock:
     description: Post/update the semantic package-lock.json diff PR comment.
     value: ${{ steps.classify.outputs.npm_lock }}
+  installer:
+    description: Run the PowerShell installer tests on a Windows runner.
+    value: ${{ steps.classify.outputs.installer }}
+  rust:
+    description: Run `cargo test` for the Tauri bootstrap installer.
+    value: ${{ steps.classify.outputs.rust }}
   mcp_catalog:
     description: Require MCP catalog security review label.
     value: ${{ steps.classify.outputs.mcp_catalog }}
@@ -66,6 +81,7 @@ runs:
         EVENT_NAME: ${{ github.event_name }}
         BASE_SHA: ${{ github.event.pull_request.base.sha }}
         HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        HEAD_REF: ${{ github.head_ref }}
       run: |
         set -euo pipefail
 
@@ -73,37 +89,49 @@ runs:
         # dispatch) leave CHANGED empty, so the classifier fails open and every
         # lane runs. Post-merge / on-demand validation is never weakened.
         if [ "$EVENT_NAME" = "pull_request" ]; then
-          # Use the compare endpoint with the pinned base/head SHAs from the
-          # event payload instead of the "current PR files" endpoint. The SHAs
-          # are frozen at trigger time, so the file list is deterministic even
-          # if the PR receives a new push between trigger and detect.
-          #
-          # Retried: a rate-limit blip or eventual-consistency 404 on a
-          # freshly-pushed HEAD would otherwise silently fall open (all lanes
-          # run — safe, but wasteful and it masks the API failure).
-          #
-          # `.files[]?` (null-safe): with --paginate, a PR more than 100
-          # commits ahead of its merge-base paginates the compare, and pages
-          # after the first carry `files: null` — bare `.files[]` makes jq
-          # die with "cannot iterate over: null", which fails every retry
-          # and forces the fail-open path (seen on stacked PRs). The full
-          # file list (up to the API's 300-file cap) is on page one.
-          CHANGED=""
-          for i in 1 2 3; do
-            if CHANGED="$(gh api \
-              --paginate \
-              "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}" \
-              --jq '.files[]?.filename')"; then
-              break
-            fi
-            if [ "$i" = 3 ]; then
-              echo "::warning::compare API failed after 3 attempts — failing open (all lanes run)"
+          # Synchronization PRs can import thousands of upstream commits. The
+          # compare API is not a reliable file-list mechanism at that scale.
+          # Run every lane instead; this is conservative and avoids weakening
+          # validation because API pagination or timeouts hid the diff.
+          case "$HEAD_REF" in
+            sync/upstream-*|feat/upstream-sync-*)
+              echo "::notice::upstream synchronization branch — failing open to all CI lanes"
               CHANGED=""
-              break
-            fi
-            echo "::warning::compare API failed (attempt $i); retrying in 10s"
-            sleep 10
-          done
+              ;;
+            *)
+              # Use the compare endpoint with the pinned base/head SHAs from the
+              # event payload instead of the "current PR files" endpoint. The SHAs
+              # are frozen at trigger time, so the file list is deterministic even
+              # if the PR receives a new push between trigger and detect.
+              #
+              # Retried: a rate-limit blip or eventual-consistency 404 on a
+              # freshly-pushed HEAD would otherwise silently fall open (all lanes
+              # run — safe, but wasteful and it masks the API failure).
+              #
+              # `.files[]?` (null-safe): with --paginate, a PR more than 100
+              # commits ahead of its merge-base paginates the compare, and pages
+              # after the first carry `files: null` — bare `.files[]` makes jq
+              # die with "cannot iterate over: null", which fails every retry
+              # and forces the fail-open path (seen on stacked PRs). The full
+              # file list (up to the API's 300-file cap) is on page one.
+              CHANGED=""
+              for i in 1 2 3; do
+                if CHANGED="$(gh api \
+                  --paginate \
+                  "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}" \
+                  --jq '.files[]?.filename')"; then
+                  break
+                fi
+                if [ "$i" = 3 ]; then
+                  echo "::warning::compare API failed after 3 attempts — failing open (all lanes run)"
+                  CHANGED=""
+                  break
+                fi
+                echo "::warning::compare API failed (attempt $i); retrying in 10s"
+                sleep 10
+              done
+              ;;
+          esac
         fi
 
         echo "Changed files:"

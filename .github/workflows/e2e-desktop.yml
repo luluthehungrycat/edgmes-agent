@@ -17,6 +17,8 @@ concurrency:
 jobs:
   e2e:
     name: Playwright E2E (Linux)
+    # Keep this optional validation on a generally available hosted runner
+    # rather than a capacity-constrained large-runner label.
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -184,6 +186,18 @@ jobs:
             cat /tmp/e2e-review-status.json
             echo '__E2E_REVIEW_STATUS__'
           } >> "$GITHUB_OUTPUT"
+          cp /tmp/e2e-review-status.json review-status.json
+
+      - name: Upload review status artifact
+        if: always() && steps.review-status.outcome != 'skipped'
+        continue-on-error: true
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: review-status-e2e-desktop
+          path: apps/desktop/review-status.json
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: ignore
 
       # The trusted workflow_run publisher consumes only this flat, bounded
       # artifact. It turns selected images into GitHub attachment URLs; it

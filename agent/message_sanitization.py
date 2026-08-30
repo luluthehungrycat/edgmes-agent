@@ -183,6 +183,15 @@ def _escape_invalid_chars_in_json_strings(raw: str) -> str:
     return "".join(out)
 
 
+# When a repair is about to destroy the only copy of a tool call's original
+# argument bytes (rewriting them to "{}"), the WARNING log is the last
+# surviving copy of content that can hold real user data (#80498). Bound the
+# logged string at this size instead of a short preview so it stays
+# recoverable from agent.log without letting a pathological payload flood
+# the log.
+_FULL_ARGS_LOG_BOUND = 100_000
+
+
 def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
     """Attempt to repair malformed tool_call argument JSON.
 
@@ -271,11 +280,15 @@ def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
         pass
 
     # Last resort: replace with empty object so the API request doesn't
-    # crash the entire session.
+    # crash the entire session. Log the FULL original string (bounded) —
+    # for callers that discard the original (e.g. the pre-send transcript
+    # sanitizer), this WARNING is the last surviving copy of bytes that can
+    # contain real user content (#80498: a truncated write_file call's
+    # streamed file content).
     logger.warning(
         "Unrepairable tool_call arguments for %s — "
         "replaced with empty object (was: %s)",
-        tool_name, raw_stripped[:80],
+        tool_name, raw_stripped[:_FULL_ARGS_LOG_BOUND],
     )
     return "{}"
 
@@ -305,7 +318,9 @@ def close_interrupted_tool_sequence(messages: list, final_response: Any = None) 
     if not isinstance(last, dict) or last.get("role") != "tool":
         return False
     text = final_response if isinstance(final_response, str) else ""
-    messages.append({
+    from agent.message_metadata import append_message
+
+    append_message(messages, {
         "role": "assistant",
         "content": text.strip() or "Operation interrupted.",
     })
@@ -478,6 +493,8 @@ __all__ = [
     # call_id policy owners (F4 consolidation)
     "deterministic_call_id",
     "coalesce_tool_call_id",
+    "tool_call_id_variants",
+    "tool_result_id_variants",
     "uniquify_tool_call_ids",
     # reasoning_content policy owners (F4 consolidation)
     "reasoning_echo_family",
@@ -521,16 +538,72 @@ def deterministic_call_id(fn_name: str, arguments: str, index: int = 0) -> str:
     return f"call_{digest}"
 
 
+def _expand_tool_id_variants(values: tuple[Any, ...]) -> frozenset[str]:
+    """Return every wire spelling of one or more tool-call identifiers.
+
+    Responses bridges may expose the pairing id and response-item id
+    separately, or encode both as ``call_id|response_item_id``.  The values
+    are aliases for one call, not distinct calls.  Keeping the expansion in
+    the shared policy module prevents the repair and pre-send paths from
+    drifting apart again.
+    """
+    variants: set[str] = set()
+    for raw in values:
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if not value:
+            continue
+        variants.add(value)
+        if "|" in value:
+            for part in value.split("|"):
+                part = part.strip()
+                if part:
+                    variants.add(part)
+    return frozenset(variants)
+
+
+def tool_call_id_variants(tc: Any) -> frozenset[str]:
+    """Return all pairing-id variants carried by a tool-call entry."""
+    if isinstance(tc, dict):
+        values = (
+            tc.get("call_id"),
+            tc.get("id"),
+            tc.get("response_item_id"),
+        )
+    else:
+        values = (
+            getattr(tc, "call_id", None),
+            getattr(tc, "id", None),
+            getattr(tc, "response_item_id", None),
+        )
+    return _expand_tool_id_variants(values)
+
+
+def tool_result_id_variants(tool_call_id: Any) -> frozenset[str]:
+    """Return all matching variants for a role=tool ``tool_call_id``."""
+    return _expand_tool_id_variants((tool_call_id,))
+
+
 def coalesce_tool_call_id(tc: Any) -> str:
     """Extract the effective call ID from a tool_call entry (dict or object).
 
-    Single owner for the ``call_id or id`` coalescing rule: Codex Responses
-    tool calls carry ``call_id`` (authoritative pairing key), Chat
-    Completions ones carry ``id`` only. Returns ``""`` when neither is set.
+    Single owner for the canonical pairing rule: Codex Responses tool calls
+    carry ``call_id`` (authoritative pairing key), Chat Completions ones carry
+    ``id`` only, and bridge ids may encode ``call_id|response_item_id``.
+    Returns ``""`` when neither pairing field is set.
     """
     if isinstance(tc, dict):
-        return (tc.get("call_id", "") or tc.get("id", "") or "").strip()
-    return (getattr(tc, "call_id", "") or getattr(tc, "id", "") or "").strip()
+        values = (tc.get("call_id"), tc.get("id"))
+    else:
+        values = (getattr(tc, "call_id", None), getattr(tc, "id", None))
+    for raw in values:
+        if not isinstance(raw, str):
+            continue
+        value = raw.strip()
+        if value:
+            return value.split("|", 1)[0].strip() or value
+    return ""
 
 
 def uniquify_tool_call_ids(tool_calls: list) -> list:
