@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 import tempfile
 from types import MappingProxyType
-from typing import Iterable, Mapping
+from typing import Iterable, Mapping, Protocol
 
 
 class LedgerError(ValueError):
@@ -17,6 +17,34 @@ class LedgerError(ValueError):
 
 class ContextBudgetError(LedgerError):
     """Mandatory context cannot fit within the requested budget."""
+
+
+class Tokenizer(Protocol):
+    """Optional provider-shaped counter for already-rendered context text."""
+
+    def __call__(self, text: str) -> int: ...
+
+
+@dataclass(frozen=True)
+class MeasurementResult:
+    """Validated count and its accounting mode."""
+
+    count: int
+    mode: str
+
+
+def measure_text(text: str, tokenizer: Tokenizer | None = None) -> MeasurementResult:
+    """Measure text, falling back conservatively to characters on adapter errors."""
+
+    if tokenizer is not None:
+        try:
+            count = tokenizer(text)
+            if isinstance(count, int) and not isinstance(count, bool) and count > 0:
+                return MeasurementResult(count, "tokenizer")
+        except Exception:  # adapters are optional and must never break budgeting
+            pass
+    count = len(text)
+    return MeasurementResult(count, "character-fallback")
 
 
 _ALLOWED_CATEGORIES = frozenset(
@@ -193,6 +221,10 @@ class ContextProjection:
     selected: tuple[LedgerEntry, ...]
     omitted: tuple[str, ...]
     budget: int
+    measured_count: int = 0
+    measurement_mode: str = "character-fallback"
+    omission_reasons: Mapping[str, str] = field(default_factory=dict)
+    _rendered_context: str = ""
 
     @property
     def serialized_size(self) -> int:
@@ -202,15 +234,27 @@ class ContextProjection:
     def rendered_text(self) -> str:
         return "\n\n".join(f"[{item.category}]\n{item.content}" for item in self.selected)
 
+    @property
+    def rendered_context(self) -> str:
+        """The exact text measured for this projection."""
+
+        return self._rendered_context or self.rendered_text
+
 
 def _rendered_entry_size(item: LedgerEntry) -> int:
     return len(f"[{item.category}]\n{item.content}")
 
 
 def select_bounded_context(
-    entries: Iterable[LedgerEntry], *, budget: int
+    entries: Iterable[LedgerEntry], *, budget: int, tokenizer: Tokenizer | None = None,
+    prefix: str = "", suffix: str = ""
 ) -> ContextProjection:
-    """Select whole ledger entries deterministically within a character budget."""
+    """Select whole entries deterministically within a measured rendered budget.
+
+    ``prefix`` and ``suffix`` let callers account for wrapper text (notably the
+    system instruction) without changing the backend protocol. With no
+    tokenizer or wrapper this retains the historical character-budget API.
+    """
 
     if not isinstance(budget, int) or isinstance(budget, bool) or budget < 1:
         raise ContextBudgetError("context budget must be a positive integer")
@@ -232,14 +276,30 @@ def select_bounded_context(
     )
     selected: list[LedgerEntry] = []
     omitted: list[str] = []
-    size = 0
+    omission_reasons: dict[str, str] = {}
+
+    def rendered(items: Iterable[LedgerEntry]) -> str:
+        body = "\n\n".join(f"[{item.category}]\n{item.content}" for item in items)
+        return f"{prefix}{body}{suffix}"
+
+    measured = measure_text(rendered(()), tokenizer)
     for item in ranked:
-        next_size = size + _rendered_entry_size(item) + (2 if selected else 0)
-        if next_size <= budget:
+        candidate = tuple(selected) + (item,)
+        next_measurement = measure_text(rendered(candidate), tokenizer)
+        if next_measurement.count <= budget:
             selected.append(item)
-            size = next_size
+            measured = next_measurement
         elif item.mandatory:
             raise ContextBudgetError(f"mandatory context does not fit: {item.entry_id}")
         else:
             omitted.append(item.entry_id)
-    return ContextProjection(tuple(selected), tuple(omitted), budget)
+            omission_reasons[item.entry_id] = "budget"
+    # Re-measure the final rendered value so metadata and diagnostics always
+    # describe the exact context that will be sent, not a rejected candidate.
+    measured = measure_text(rendered(selected), tokenizer)
+    if measured.count > budget:
+        raise ContextBudgetError("selected context exceeds budget")
+    return ContextProjection(
+        tuple(selected), tuple(omitted), budget, measured.count, measured.mode,
+        MappingProxyType(omission_reasons), rendered(selected),
+    )

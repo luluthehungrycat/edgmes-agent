@@ -7,6 +7,9 @@ from .ledger import (
     LedgerEntry,
     LedgerError,
     StateLedger,
+    MeasurementResult,
+    Tokenizer,
+    measure_text,
     select_bounded_context,
 )
 from .capabilities import (
@@ -52,6 +55,9 @@ __all__ = [
     "LedgerEntry",
     "LedgerError",
     "StateLedger",
+    "MeasurementResult",
+    "Tokenizer",
+    "measure_text",
     "select_bounded_context",
     "CapabilityProfileError",
     "CapabilityProfileRegistry",
