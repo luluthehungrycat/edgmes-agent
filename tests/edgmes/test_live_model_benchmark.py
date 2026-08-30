@@ -1,8 +1,14 @@
 import json
+from email.message import Message
+from io import BytesIO
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from scripts.benchmarks.live_model_benchmark import (
+    BackendUnavailable,
     CASES,
     OpenRouterClient,
+    OpenAICompatibleClient,
     _parse_plan,
     run,
 )
@@ -69,3 +75,18 @@ def test_backend_metadata_controls_tool_call_metric() -> None:
     results = run(client=Backend(), model="fake/model", levels=(16_000,), case_limit=1)
     assert results[0].status == "passed"
     assert results[0].tool_calls == 3
+
+
+def test_http_error_body_cannot_leak_backend_key() -> None:
+    secret = "TOPSECRET-DO-NOT-LEAK"
+    error = HTTPError("https://example.invalid", 401, "unauthorized", Message(), BytesIO(secret.encode()))
+    client = OpenAICompatibleClient(secret, "https://example.invalid")
+
+    with patch("scripts.benchmarks.live_model_benchmark.urlopen", side_effect=error):
+        try:
+            client.complete(model="fake/model", prompt="hello")
+        except BackendUnavailable as exc:
+            assert str(exc) == "HTTP 401"
+            assert secret not in str(exc)
+        else:
+            raise AssertionError("HTTP error must be reported as unavailable")

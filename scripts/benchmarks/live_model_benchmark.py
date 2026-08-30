@@ -92,9 +92,9 @@ class OpenAICompatibleClient:
             with urlopen(request, timeout=self.timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except HTTPError as exc:
-            # Do not include the URL or authorization header in the report.
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
-            raise BackendUnavailable(f"HTTP {exc.code}: {detail}") from exc
+            # Provider error bodies may echo the bearer token or other secrets.
+            # Keep only the status code in the persisted benchmark report.
+            raise BackendUnavailable(f"HTTP {exc.code}") from exc
         except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
             raise BackendUnavailable(f"request failed: {type(exc).__name__}: {exc}") from exc
         try:
