@@ -1,39 +1,55 @@
-# Edgmes live model benchmark
+# Edgmes live comparative benchmark
 
-`scripts/benchmarks/live_model_benchmark.py` measures whether an OpenAI-compatible
-model can produce a bounded, verifiable plan for the six Edgmes task classes.
-It does not execute model-proposed commands. The deterministic benchmark remains
-the execution and safety baseline.
+`scripts/benchmarks/live_model_benchmark.py` measures a model's bounded plan
+completion for the six Edgmes task classes at **16,000, 32,000, 48,000, and
+64,000 token** context budgets. It does not execute model-proposed commands;
+the deterministic verification benchmark remains the execution and safety
+baseline.
 
-## OpenRouter
+## Configure an OpenAI-compatible backend
 
-The default model is `liquid/lfm-2.5-2.6b:free`. It is currently the most
-appropriate free remote baseline for this experiment because its published
-context window is 65,536 tokens, so the full 16k/32k/48k/64k sweep fits its
-advertised limit. The model is a capability probe, not a release-quality
-agent recommendation.
+The endpoint must expose `POST {base-url}/chat/completions`. Credentials are
+read only from the environment and are never written to the JSON report.
 
 ```bash
-export OPENROUTER_API_KEY=...
+export EDGMES_API_KEY=...
 uv run --locked python scripts/benchmarks/live_model_benchmark.py \
-  --output /tmp/edgmes-live.json
+  --base-url https://your-endpoint.example/v1 \
+  --model your-model --output /tmp/edgmes-live.json
 ```
 
-The default run makes 24 requests: six cases at each of four artificial context
-levels. Use `--case-limit 1` for a connectivity smoke test. The report records
-model, context level, latency, prompt/response size, parsed plan, and failures.
+Use another secret variable without putting the secret on the command line:
 
-The requested level is a total context budget. The harness reserves 2,048
-tokens for output plus a 256-token prompt overhead, so the 64k request remains
-within a model advertising a 65,536-token context window.
+```bash
+EDGMES_API_KEY=... python scripts/benchmarks/live_model_benchmark.py \
+  --api-key-env OPENAI_API_KEY --case-limit 1
+```
 
-The context is deliberately synthetic and approximately four characters per
-token. It tests prompt-budget behavior; it is not a tokenizer-accurate claim.
+The default run makes 24 requests (six cases at each budget). `--case-limit 1`
+is a bounded connectivity smoke test. `--levels 16000,32000` is useful for a
+shorter comparison. Each result includes status, completion and verification
+flags, tool-call count, latency, prompt/response sizes, estimated context
+usage, parsed plan, and a failure reason where relevant.
 
-## Local model guidance
+## Offline and unavailable behavior
 
-The development VPS has 7.8 GiB RAM, about 2 GiB available at inspection time,
-and no swap. Existing 2–3B quantized Ollama models are reasonable for 16k
-smoke tests. Running a new 7B model or attempting a 64k local sweep is not
-worth the memory and latency risk on that host. Use the 24 GiB VPS or remote
-inference for broader sweeps.
+No credentials are assumed. With no configured key, the command still emits a
+complete machine-readable report: every requested case is `status: "unavailable"`,
+`completion: false`, `verification: false`, and no synthetic plan or score is
+created. The summary separates `passed`, `failed`, and `unavailable`; the CLI
+returns exit code 1 when either failed or unavailable results exist. This makes
+an offline run honest and CI-detectable rather than silently treating it as a
+passing benchmark.
+
+Network errors, HTTP errors, empty responses, and invalid backend responses are
+also recorded as unavailable. A reachable backend that returns malformed model
+JSON is recorded as `failed`. Inject `CompletionClient` into `run()` for tests
+or another provider; no provider SDK is required.
+
+## Interpretation
+
+The context is synthetic and uses an approximately four-characters-per-token
+fixture expansion. `context_tokens` is the requested budget, while
+`context_tokens_estimate` is a reporting estimate—not a tokenizer-accurate
+claim. Compare reports only when the model, endpoint configuration, benchmark
+version, case definitions, and requested levels are recorded consistently.

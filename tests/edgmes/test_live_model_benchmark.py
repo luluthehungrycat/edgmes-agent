@@ -48,3 +48,24 @@ def test_openrouter_client_rejects_missing_key() -> None:
         assert "OPENROUTER_API_KEY" in str(exc)
     else:
         raise AssertionError("missing key must be rejected")
+
+
+def test_unavailable_injected_backend_is_not_a_fabricated_pass() -> None:
+    class Unavailable:
+        def complete(self, *, model: str, prompt: str):
+            raise RuntimeError("offline")
+
+    results = run(client=Unavailable(), model="offline", levels=(16_000,), case_limit=1)
+    assert results[0].status == "failed"
+    assert not results[0].completion
+    assert results[0].plan is None
+
+
+def test_backend_metadata_controls_tool_call_metric() -> None:
+    class Backend:
+        def complete(self, *, model: str, prompt: str):
+            return ('{"actions": [], "verification": "checked", "safe": true, "answer": "ok"}', {"tool_calls": 3})
+
+    results = run(client=Backend(), model="fake/model", levels=(16_000,), case_limit=1)
+    assert results[0].status == "passed"
+    assert results[0].tool_calls == 3
