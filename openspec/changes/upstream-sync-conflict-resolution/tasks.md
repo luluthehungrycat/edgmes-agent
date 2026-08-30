@@ -16,6 +16,7 @@
 - [x] 2.4 Confirm the synchronization worktree is clean, has no conflict markers, and contains only the validated merge result.
 - [x] 2.5 Add regression coverage for ordinary branches, sync branches, and downstream commits after an upstream merge.
 - [x] 2.6 Validate synchronization branch detection and all-lane fail-open behavior in the composite action path.
+- [x] 2.7 Restore bounded Python test slicing and JS/TS workspace fan-out after the upstream monolithic runner assumptions caused timeout-sensitive failures on standard hosted runners.
 
 ## 3. Reviewable publication
 
