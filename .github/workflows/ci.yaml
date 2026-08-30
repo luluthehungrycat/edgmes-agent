@@ -154,7 +154,10 @@ jobs:
   contributor-check:
     name: Check contributors
     needs: detect
-    if: needs.detect.outputs.python == 'true'
+    # Attribution is a repository-wide invariant, not a Python-only check.
+    # Run it for every pull request so docs, workflow, and other non-Python
+    # changes cannot bypass contributor validation.
+    if: needs.detect.outputs.event_name == 'pull_request'
     uses: ./.github/workflows/contributor-check.yml
 
   uv-lockfile:
