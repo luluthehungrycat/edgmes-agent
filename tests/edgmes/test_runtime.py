@@ -106,3 +106,25 @@ def test_runtime_persists_and_reloads_ledger(tmp_path) -> None:
     assert path.is_file()
     assert len(result.ledger.entries) == 6
     assert result.selected_context[0] == "request-4"
+
+
+def test_runtime_passes_exact_wrapped_context_to_injected_tokenizer() -> None:
+    measured: list[str] = []
+
+    def tokenizer(text: str) -> int:
+        measured.append(text)
+        return len(text)
+
+    backend = FakeBackend()
+    runtime = EdgeRuntime(
+        backend=backend,
+        model="small-local",
+        profile=default_edge_profile(context_budget=512, output_budget=64),
+        tokenizer=tokenizer,
+    )
+    result = runtime.run(RuntimeRequest(prompt="measure this"))
+
+    assert result.measured_context == len(measured[-1])
+    assert result.measurement_mode == "tokenizer"
+    assert measured[-1] == runtime._SYSTEM + "\n\n" + backend.calls[0][0][1]["content"]
+    assert result.policy.allowed

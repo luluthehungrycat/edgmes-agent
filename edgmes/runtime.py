@@ -22,7 +22,7 @@ from .capabilities import (
     default_capability_registry,
     resolve_tool_context_policy,
 )
-from .ledger import ContextBudgetError, StateLedger, LedgerEntry, select_bounded_context
+from .ledger import ContextBudgetError, StateLedger, LedgerEntry, Tokenizer, select_bounded_context
 
 
 class EdgeRuntimeError(RuntimeError):
@@ -87,6 +87,8 @@ class RuntimeResult:
     selected_context: tuple[str, ...]
     evidence: Mapping[str, object]
     ledger: StateLedger
+    measured_context: int = 0
+    measurement_mode: str = "character-fallback"
 
 
 class OllamaBackend:
@@ -176,6 +178,7 @@ class EdgeRuntime:
         profiles: CapabilityProfileRegistry | None = None,
         default_profile_id: str | None = None,
         ledger_path: str | Path | None = None,
+        tokenizer: Tokenizer | None = None,
     ) -> None:
         if not model.strip():
             raise ValueError("model must not be empty")
@@ -195,6 +198,7 @@ class EdgeRuntime:
         except UnknownCapabilityProfileError as exc:
             raise ValueError(str(exc)) from exc
         self.ledger_path = Path(ledger_path) if ledger_path is not None else None
+        self.tokenizer = tokenizer
         self.ledger = (
             StateLedger.load(self.ledger_path)
             if ledger is None and self.ledger_path is not None and self.ledger_path.exists()
@@ -213,16 +217,16 @@ class EdgeRuntime:
         turn_number = len(self.ledger.entries) + 1
         request_id = f"request-{turn_number}"
         current = LedgerEntry(request_id, "current_request", request.prompt, mandatory=True, recency=turn_number)
-        context_budget = profile.context_budget - len(self._SYSTEM)
-        if context_budget < 1:
-            raise RuntimePolicyError("profile context budget cannot fit runtime instructions")
         try:
             projection = select_bounded_context(
-                (*self.ledger.entries, current), budget=context_budget
+                (*self.ledger.entries, current),
+                budget=profile.context_budget,
+                tokenizer=self.tokenizer,
+                prefix=f"{self._SYSTEM}\n\n",
             )
         except ContextBudgetError as exc:
             raise RuntimePolicyError(str(exc)) from exc
-        estimated_context = len(self._SYSTEM) + projection.serialized_size
+        estimated_context = projection.measured_count
         policy = resolve_tool_context_policy(
             profile,
             PolicyRequest(
@@ -276,6 +280,8 @@ class EdgeRuntime:
             selected_context,
             response.evidence,
             updated,
+            projection.measured_count,
+            projection.measurement_mode,
         )
 
 
@@ -301,6 +307,8 @@ def _main(argv: Sequence[str] | None = None) -> int:
             "model": result.model,
             "profile_id": result.profile_id,
             "selected_context": result.selected_context,
+            "measured_context": result.measured_context,
+            "measurement_mode": result.measurement_mode,
             "evidence": dict(result.evidence),
             "ledger_entries": len(result.ledger.entries),
         }, ensure_ascii=False))

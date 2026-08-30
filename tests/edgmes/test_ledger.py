@@ -94,3 +94,52 @@ def test_ledger_rejects_malformed_persisted_data(tmp_path) -> None:
 
     with pytest.raises(LedgerError):
         StateLedger.load(path)
+
+
+def test_tokenizer_measures_wrapped_context_and_reports_omissions() -> None:
+    calls: list[str] = []
+
+    def tokenizer(text: str) -> int:
+        calls.append(text)
+        return len(text) // 2 + (1 if text else 0)
+
+    result = select_bounded_context(
+        [entry("old", "old"), entry("request", "request", category="current_request")],
+        budget=20,
+        tokenizer=tokenizer,
+        prefix="SYSTEM\n\n",
+    )
+    assert result.measurement_mode == "tokenizer"
+    assert result.measured_count <= result.budget
+    assert result.rendered_context == "SYSTEM\n\n" + result.rendered_text
+    assert result.omission_reasons == {"old": "budget"}
+    assert calls[-1] == result.rendered_context
+
+
+def test_invalid_or_failing_tokenizer_uses_character_fallback() -> None:
+    for adapter in (lambda text: 0, lambda text: "bad", lambda text: (_ for _ in ()).throw(RuntimeError("x"))):
+        result = select_bounded_context(
+            [entry("request", "request", category="current_request")],
+            budget=100,
+            tokenizer=adapter,
+            prefix="SYS\n\n",
+        )
+        assert result.measurement_mode == "character-fallback"
+        assert result.measured_count == len(result.rendered_context)
+
+
+def test_artificial_context_budgets_are_real_budget_checks() -> None:
+    entries = [entry(f"fact-{i}", "x" * 1000, priority=i) for i in range(80)]
+    for budget in (16_000, 32_000, 48_000, 64_000):
+        result = select_bounded_context(entries, budget=budget)
+        assert result.measured_count == len(result.rendered_context)
+        assert result.measured_count <= budget
+
+
+def test_mandatory_wrapper_or_request_overflow_fails_closed() -> None:
+    with pytest.raises(ContextBudgetError):
+        select_bounded_context(
+            [entry("request", "request", category="current_request")],
+            budget=3,
+            prefix="system instructions",
+        )
