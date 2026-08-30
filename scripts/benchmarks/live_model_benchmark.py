@@ -105,7 +105,9 @@ class OpenAICompatibleClient:
             raise BackendUnavailable("response did not contain choices[0].message.content") from exc
         if not isinstance(text, str) or not text.strip():
             raise BackendUnavailable("backend returned empty content")
-        return text, body.get("usage", {}) if isinstance(body, dict) else {}
+        # A successful model can echo the bearer token in any JSON field.
+        # Redact it before parsing or persisting the model response.
+        return text.replace(self.api_key, "[REDACTED]"), body.get("usage", {}) if isinstance(body, dict) else {}
 
 
 # Backwards-compatible name used by the initial live benchmark.

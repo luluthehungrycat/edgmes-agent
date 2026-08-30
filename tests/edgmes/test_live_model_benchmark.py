@@ -90,3 +90,31 @@ def test_http_error_body_cannot_leak_backend_key() -> None:
             assert secret not in str(exc)
         else:
             raise AssertionError("HTTP error must be reported as unavailable")
+
+
+def test_successful_response_cannot_persist_backend_key() -> None:
+    secret = "TOPSECRET-DO-NOT-LEAK"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": json.dumps({
+                    "actions": ["read_file"],
+                    "verification": "checked",
+                    "safe": True,
+                    "answer": secret,
+                })}}],
+            }).encode()
+
+    client = OpenAICompatibleClient(secret, "https://example.invalid")
+    with patch("scripts.benchmarks.live_model_benchmark.urlopen", return_value=Response()):
+        text, _ = client.complete(model="fake/model", prompt="hello")
+
+    assert secret not in text
+    assert "[REDACTED]" in text
