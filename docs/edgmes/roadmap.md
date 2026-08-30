@@ -73,7 +73,8 @@ policy, compression policy, and observed model metadata remain later work.
 ### 2. Bounded context and state ledger
 
 **Status:** structured ledger, deterministic bounded selector, JSON persistence,
-and edge-runtime integration complete; tokenizer-aware budgeting remains.
+edge-runtime integration, tokenizer-aware measurement, and deterministic
+compaction complete.
 
 Implemented under `edgmes/ledger.py`:
 
@@ -82,11 +83,16 @@ Implemented under `edgmes/ledger.py`:
 - transcript/secret rejection at the ledger boundary;
 - immutable ledger snapshots;
 - deterministic priority/verification/recency ranking;
-- whole-entry greedy packing under a character budget;
-- mandatory current-request handling and omission reporting.
+- whole-entry packing under an exact tokenizer budget when an adapter is
+  available;
+- conservative character-count fallback when it is unavailable or fails;
+- mandatory current-request handling and stable omission reasons;
+- exact wrapped-context measurement, including system instructions and
+  separators, without mutating source ledger entries.
 
-Raw Hermes transcript persistence remains untouched. Tokenizer-aware budgeting
-and deterministic compaction remain next-stage work.
+Raw Hermes transcript persistence remains untouched. Provider-specific tokenizer
+adapters and live model calibration remain future work; the default edge runtime
+stays dependency-free.
 
 ### 3. Edge tool policy and runtime
 
