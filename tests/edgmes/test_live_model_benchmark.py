@@ -1,8 +1,14 @@
 import json
+from email.message import Message
+from io import BytesIO
+from unittest.mock import patch
+from urllib.error import HTTPError
 
 from scripts.benchmarks.live_model_benchmark import (
+    BackendUnavailable,
     CASES,
     OpenRouterClient,
+    OpenAICompatibleClient,
     _parse_plan,
     run,
 )
@@ -48,3 +54,67 @@ def test_openrouter_client_rejects_missing_key() -> None:
         assert "OPENROUTER_API_KEY" in str(exc)
     else:
         raise AssertionError("missing key must be rejected")
+
+
+def test_unavailable_injected_backend_is_not_a_fabricated_pass() -> None:
+    class Unavailable:
+        def complete(self, *, model: str, prompt: str):
+            raise RuntimeError("offline")
+
+    results = run(client=Unavailable(), model="offline", levels=(16_000,), case_limit=1)
+    assert results[0].status == "failed"
+    assert not results[0].completion
+    assert results[0].plan is None
+
+
+def test_backend_metadata_controls_tool_call_metric() -> None:
+    class Backend:
+        def complete(self, *, model: str, prompt: str):
+            return ('{"actions": [], "verification": "checked", "safe": true, "answer": "ok"}', {"tool_calls": 3})
+
+    results = run(client=Backend(), model="fake/model", levels=(16_000,), case_limit=1)
+    assert results[0].status == "passed"
+    assert results[0].tool_calls == 3
+
+
+def test_http_error_body_cannot_leak_backend_key() -> None:
+    secret = "TOPSECRET-DO-NOT-LEAK"
+    error = HTTPError("https://example.invalid", 401, "unauthorized", Message(), BytesIO(secret.encode()))
+    client = OpenAICompatibleClient(secret, "https://example.invalid")
+
+    with patch("scripts.benchmarks.live_model_benchmark.urlopen", side_effect=error):
+        try:
+            client.complete(model="fake/model", prompt="hello")
+        except BackendUnavailable as exc:
+            assert str(exc) == "HTTP 401"
+            assert secret not in str(exc)
+        else:
+            raise AssertionError("HTTP error must be reported as unavailable")
+
+
+def test_successful_response_cannot_persist_backend_key() -> None:
+    secret = "TOPSECRET-DO-NOT-LEAK"
+
+    class Response:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def read(self):
+            return json.dumps({
+                "choices": [{"message": {"content": json.dumps({
+                    "actions": ["read_file"],
+                    "verification": "checked",
+                    "safe": True,
+                    "answer": secret,
+                })}}],
+            }).encode()
+
+    client = OpenAICompatibleClient(secret, "https://example.invalid")
+    with patch("scripts.benchmarks.live_model_benchmark.urlopen", return_value=Response()):
+        text, _ = client.complete(model="fake/model", prompt="hello")
+
+    assert secret not in text
+    assert "[REDACTED]" in text
