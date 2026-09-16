@@ -10,13 +10,17 @@ description: >-
   reusable workflow resolved from an untrusted PR ref. The fallback keeps a
   trusted caller functional when its protected environment is misconfigured.
 
-  Composite actions cannot access contexts directly, so callers pass the
-  public vars.APP_CLIENT_ID and protected secrets.APP_PRIVATE_KEY as inputs.
-  When the private key is empty, the fallback fires.
+  Callers may pass either the numeric App ID or the public Client ID. The
+  fallback keeps a trusted caller functional when its protected environment
+  is misconfigured.
 
 inputs:
+  app-id:
+    description: Numeric GitHub App ID. Takes precedence over client-id.
+    required: false
+    default: ''
   client-id:
-    description: GitHub App Client ID. Pass vars.APP_CLIENT_ID from the calling workflow.
+    description: GitHub App Client ID.
     required: false
     default: ''
   private-key:
@@ -44,9 +48,10 @@ runs:
       id: check
       shell: bash
       env:
+        APP_ID: ${{ inputs.app-id }}
         CLIENT_ID: ${{ inputs.client-id }}
       run: |
-        if [ -n "$CLIENT_ID" ]; then
+        if [ -n "$APP_ID" ] || [ -n "$CLIENT_ID" ]; then
           echo "has_app=true" >> "$GITHUB_OUTPUT"
         else
           echo "has_app=false" >> "$GITHUB_OUTPUT"
@@ -57,6 +62,7 @@ runs:
       if: steps.check.outputs.has_app == 'true'
       uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
       with:
+        app-id: ${{ inputs.app-id }}
         client-id: ${{ inputs.client-id }}
         private-key: ${{ inputs.private-key }}
         owner: ${{ inputs.owner }}
