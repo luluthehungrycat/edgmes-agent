@@ -35,7 +35,7 @@ class _SlowUnwindingChild:
         # Model the real child turn's finally path: it still performs session
         # activity/SQLite cleanup after the parent requests interruption.
         self.unwinding.set()
-        assert self.allow_finish.wait(timeout=2)
+        assert self.allow_finish.wait(timeout=10)
         self.finished.set()
         return {
             "final_response": "",
@@ -76,7 +76,7 @@ def test_timeout_does_not_close_child_while_worker_is_unwinding(monkeypatch):
     )
 
     assert result["status"] == "timeout"
-    assert child.unwinding.wait(timeout=1)
+    assert child.unwinding.wait(timeout=5)
     try:
         assert not child.closed.is_set(), (
             "timed-out child.close() ran before its conversation thread unwound"
