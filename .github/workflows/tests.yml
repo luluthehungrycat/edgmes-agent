@@ -117,6 +117,16 @@ jobs:
         # re-download, keeping the persisted cache small and fast to restore.
         run: uv cache prune --ci
 
+      - name: Restore per-file duration cache
+        # Restore the most recent aggregate duration cache so the runner can
+        # scale timeouts for known-slow files before executing this slice.
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: test_durations.json
+          key: test-durations-never-exact
+          restore-keys: |
+            test-durations-
+
       - name: Run tests (slice ${{ matrix.slice.index }}/${{ inputs.slice_count }})
         # Per-file isolation via scripts/run_tests.sh: each test file runs
         # in its own freshly-spawned `python -m pytest <file>` subprocess
