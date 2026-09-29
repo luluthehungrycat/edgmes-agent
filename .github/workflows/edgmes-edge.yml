@@ -39,6 +39,11 @@ jobs:
         with:
           command: uv sync --locked --python 3.14 --group dev
 
+      # docs/edgmes changes skip the broad Python lint lane, so enforce the
+      # portable scratch-path rule in the edge lane that classifies these docs.
+      - name: Forbid literal /tmp paths in Edgmes changes
+        run: python scripts/check_no_tmp_literals.py
+
       - name: Check installable edge boundary
         run: uv run python scripts/edgmes/check_boundary.py
 

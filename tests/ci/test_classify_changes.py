@@ -88,6 +88,10 @@ CASES = {
     # also re-arms the desktop_updater integration tests (fail-open).
     "dep manifest → python": (["pyproject.toml"], _lanes(python=True, scan=True, deps=True, uv_lock=True, edgmes=True, desktop_updater=True)),
     "edgmes source → edge checks": (["edgmes/runtime.py"], _lanes(python=True, scan=True, edgmes=True)),
+    "edgmes docs → edge checks only": (
+        ["docs/edgmes/live-model-benchmark.md"],
+        _lanes(edgmes=True),
+    ),
     "uv.lock → python": (["uv.lock"], _lanes(python=True, uv_lock=True)),
     "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(frontend=True)),
     "ui-tui → frontend": (["ui-tui/src/entry.ts"], _lanes(frontend=True)),
