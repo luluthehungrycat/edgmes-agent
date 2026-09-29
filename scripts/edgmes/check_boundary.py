@@ -48,7 +48,7 @@ def check(root: Path) -> list[str]:
         return [f"missing package directory: {package}"]
     if not manifest.is_file():
         return [f"missing package manifest: {manifest}"]
-    manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    manifest_data = tomllib.loads(manifest.read_text(encoding="utf-8-sig"))
     package_find = manifest_data.get("tool", {}).get("setuptools", {}).get("packages", {}).get("find", {})
     included_packages = package_find.get("include", [])
     py_modules = manifest_data.get("tool", {}).get("setuptools", {}).get("py-modules", [])
@@ -65,7 +65,7 @@ def check(root: Path) -> list[str]:
     if scripts.get("edgmes") != "edgmes.runtime:_main":
         errors.append("pyproject.toml does not expose the edgmes console entry point")
     for path in sorted(package.rglob("*.py")):
-        source = path.read_text(encoding="utf-8")
+        source = path.read_text(encoding="utf-8-sig")
         for marker in FORBIDDEN_HOME_MARKERS:
             if marker in source:
                 errors.append(f"{path.relative_to(root)} references forbidden Hermes home marker {marker}")

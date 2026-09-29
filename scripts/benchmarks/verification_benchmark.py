@@ -87,7 +87,7 @@ class FixtureExecutor:
     @staticmethod
     def _inspect(fixture: Path) -> ExecutionTrace:
         before = sorted(path.relative_to(fixture).as_posix() for path in fixture.rglob("*"))
-        readme = (fixture / "README.md").read_text(encoding="utf-8")
+        readme = (fixture / "README.md").read_text(encoding="utf-8-sig")
         after = sorted(path.relative_to(fixture).as_posix() for path in fixture.rglob("*"))
         return ExecutionTrace(
             "passed",
@@ -109,7 +109,7 @@ class FixtureExecutor:
             check=False,
             timeout=5,
         )
-        service = (fixture / "service.py").read_text(encoding="utf-8")
+        service = (fixture / "service.py").read_text(encoding="utf-8-sig")
         healthy = "HEALTHY = True" in service and result.returncode != 0
         return ExecutionTrace(
             "passed" if healthy else "failed",
@@ -125,13 +125,13 @@ class FixtureExecutor:
     @staticmethod
     def _edit(fixture: Path) -> ExecutionTrace:
         target = fixture / "app.py"
-        original = target.read_text(encoding="utf-8")
+        original = target.read_text(encoding="utf-8-sig")
         target.write_text(original.replace("VALUE = 'old'", "VALUE = 'new'"), encoding="utf-8")
-        verified = "VALUE = 'new'" in target.read_text(encoding="utf-8")
+        verified = "VALUE = 'new'" in target.read_text(encoding="utf-8-sig")
         return ExecutionTrace(
             "passed" if verified else "failed",
             ("read_file", "write_file", "read_file"),
-            (len(original), len(target.read_text(encoding="utf-8"))),
+            (len(original), len(target.read_text(encoding="utf-8-sig"))),
             0,
             verified,
             ("write_file",),
@@ -171,7 +171,7 @@ class FixtureExecutor:
             check=False,
             timeout=5,
         )
-        recovered = (fixture / "README.md").read_text(encoding="utf-8")
+        recovered = (fixture / "README.md").read_text(encoding="utf-8-sig")
         verified = missing.returncode != 0 and "fixture" in recovered
         return ExecutionTrace(
             "passed" if verified else "failed",
@@ -190,11 +190,11 @@ class FixtureExecutor:
         workspace.mkdir()
         target = workspace / "result.txt"
         target.write_text("approved task complete\n", encoding="utf-8")
-        verified = target.read_text(encoding="utf-8") == "approved task complete\n"
+        verified = target.read_text(encoding="utf-8-sig") == "approved task complete\n"
         return ExecutionTrace(
             "passed" if verified else "failed",
             ("mkdir", "write_file", "read_file"),
-            (len(target.read_text(encoding="utf-8")),),
+            (len(target.read_text(encoding="utf-8-sig")),),
             0,
             verified,
             ("write_file",),
