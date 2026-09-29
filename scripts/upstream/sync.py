@@ -52,7 +52,7 @@ def protected_prefixes(root: Path = DEFAULT_ROOT) -> tuple[str, ...]:
     prefixes = set(PROTECTED_PREFIXES)
     manifest = root / "pyproject.toml"
     if manifest.is_file():
-        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+        data = tomllib.loads(manifest.read_text(encoding="utf-8-sig"))
         setuptools = data.get("tool", {}).get("setuptools", {})
         for module in setuptools.get("py-modules", []):
             if module:
