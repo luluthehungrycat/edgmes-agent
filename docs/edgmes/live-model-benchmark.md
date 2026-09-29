@@ -13,9 +13,10 @@ read only from the environment and are never written to the JSON report.
 
 ```bash
 export EDGMES_API_KEY=...
+: "${TMPDIR:?Set TMPDIR to your scratch directory}"
 uv run --locked python scripts/benchmarks/live_model_benchmark.py \
   --base-url https://your-endpoint.example/v1 \
-  --model your-model --output /tmp/edgmes-live.json
+  --model your-model --output "$TMPDIR/edgmes-live.json"
 ```
 
 Use another secret variable without putting the secret on the command line:

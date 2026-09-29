@@ -15,8 +15,9 @@ python3 scripts/benchmarks/verification_benchmark.py --json
 Write the JSON report to a file:
 
 ```bash
+: "${TMPDIR:?Set TMPDIR to your scratch directory}"
 python3 scripts/benchmarks/verification_benchmark.py \
-  --json --output /tmp/edgmes-verification.json
+  --json --output "$TMPDIR/edgmes-verification.json"
 ```
 
 The current version is `edgmes-verification-v1` and contains six cases:
