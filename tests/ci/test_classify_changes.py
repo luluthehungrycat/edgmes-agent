@@ -40,34 +40,16 @@ DEFAULT = {
     "deps": True,
     "uv_lock": True,
     "npm_lock": True,
-    "installer": True,
+    "bootstrap": True,
+    "edgmes": True,
     "desktop_updater": True,
     "rust": True,
-    "edgmes": True,
     "mcp_catalog": False,
     "ci_review": True,
 }
 
 
-def _lanes(
-    python=False,
-    frontend=False,
-    site=False,
-    scan=False,
-    deps=False,
-    uv_lock=False,
-    npm_lock=False,
-    installer=False,
-    desktop_updater=False,
-    rust=False,
-    mcp_catalog=False,
-    docker_meta=False,
-    ci_review=False,
-    python_prod=None,
-    edgmes=False,
-    nix=None,
-    docker=None,
-) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, edgmes=False, desktop_updater=False, rust=False, mcp_catalog=False, docker_meta=False, ci_review=False, python_prod=None, nix=None, docker=None) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     #
@@ -79,7 +61,6 @@ def _lanes(
     return {
         "python": python,
         "python_prod": _python_prod,
-        "edgmes": edgmes,
         "docker": (docker_meta or _product) if docker is None else docker,
         "nix": _product if nix is None else nix,
         "frontend": frontend,
@@ -89,7 +70,8 @@ def _lanes(
         "deps": deps,
         "uv_lock": uv_lock,
         "npm_lock": npm_lock,
-        "installer": installer,
+        "bootstrap": bootstrap,
+        "edgmes": edgmes,
         "desktop_updater": desktop_updater,
         "rust": rust,
         "mcp_catalog": mcp_catalog,
@@ -98,6 +80,8 @@ def _lanes(
 
 
 CASES = {
+    "shared JS builder → frontend": (["scripts/build/web.mjs"], _lanes(python=True, frontend=True)),
+    "root JS tests → frontend": (["tests-js/product-builders.test.mjs"], _lanes(python=True, frontend=True)),
     "docs-only → nothing heavy": (["README.md", "docs/guide.md"], _lanes()),
     "python source → python": (["run_agent.py"], _lanes(python=True, scan=True)),
     # pyproject.toml declares the pytest markers the OS lanes select on, so it
@@ -172,14 +156,10 @@ CASES = {
     ),
     # Prose cannot change the closure or the binary.
     "docs-only → no nix": (["README.md"], _lanes()),
-    # install.ps1 is a shell script Python never imports, but it's also not
-    # provably prose, so python stays on (fail-open) alongside the Windows lane.
-    "install.ps1 → installer": (["scripts/install.ps1"], _lanes(python=True, installer=True)),
-    "installer test → installer": (
-        ["scripts/tests/test-install-ps1-longpath.ps1"],
-        _lanes(python=True, installer=True),
-    ),
-    "python source alone → no installer lane": (["run_agent.py"], _lanes(python=True, scan=True)),
+    # install.ps1 and its PowerShell suites are exercised by platforms("windows")
+    # pytest files, so they must turn on python (which gates tests-os).
+    "install.ps1 → python": (["scripts/install.ps1"], _lanes(python=True)),
+    "installer suite → python": (["scripts/tests/test-install-ps1-longpath.ps1"], _lanes(python=True)),
     # The Windows desktop-update hand-off is a PowerShell integration surface:
     # its tests spawn the real script and poll its loopback server. They run
     # when the script, the Electron side that launches it, or their own test
@@ -208,20 +188,20 @@ CASES = {
     # the ONLY lane a Rust change ran, and the crate's tests never executed.
     "rust source → rust": (
         ["apps/bootstrap-installer/src-tauri/src/powershell.rs"],
-        _lanes(frontend=True, rust=True),
+        _lanes(frontend=True, bootstrap=True, rust=True),
     ),
     "cargo lockfile → rust": (
         ["apps/bootstrap-installer/src-tauri/Cargo.lock"],
-        _lanes(frontend=True, rust=True),
+        _lanes(frontend=True, bootstrap=True, rust=True),
     ),
     # Non-.rs files in the crate still change what cargo builds.
     "tauri config → rust": (
         ["apps/bootstrap-installer/src-tauri/tauri.conf.json"],
-        _lanes(frontend=True, rust=True),
+        _lanes(frontend=True, bootstrap=True, rust=True),
     ),
     "ts source alone → no rust lane": (
         ["apps/bootstrap-installer/src/main.tsx"],
-        _lanes(frontend=True),
+        _lanes(frontend=True, bootstrap=True),
     ),
     # Unknown top-level file keeps Python on rather than risk a silent skip.
     "unknown toplevel → python": (["Makefile"], _lanes(python=True)),
@@ -239,12 +219,18 @@ CASES = {
         ["tests/conftest.py"],
         _lanes(python=True, python_prod=False, scan=True, desktop_updater=True),
     ),
+    "conftest fixture module → python + desktop_updater": (
+        ["tests/_fixtures/platform_gating.py"],
+        _lanes(python=True, python_prod=False, scan=True, desktop_updater=True),
+    ),
     "tests + prod source → both lanes": (
         ["tests/agent/test_foo.py", "agent/x.py"],
         _lanes(python=True, scan=True),
     ),
     # Runner infrastructure is NOT tests-only — a bad runner edit can mask
-    # real failures, so it keeps the conservative full lane set.
+    # real failures, so it keeps the conservative full lane set. The .py
+    # runner additionally trips the supply-chain scan lane (executable
+    # .py/.pth payloads are what it scans for).
     "test runner script → python_prod stays on": (
         ["scripts/run_tests_parallel.py"],
         _lanes(python=True, scan=True),
@@ -283,7 +269,7 @@ CASES = {
     ),
     "bootstrap-installer eslint config → ci_review": (
         ["apps/bootstrap-installer/eslint.config.mjs"],
-        _lanes(frontend=True, ci_review=True),
+        _lanes(frontend=True, bootstrap=True, ci_review=True),
     ),
     "prettier config → ci_review": (
         [".prettierrc"],
@@ -292,6 +278,20 @@ CASES = {
     "workflow yml → ci_review (also fail-open all)": (
         [".github/workflows/typecheck.yml"],
         DEFAULT,
+    ),
+    # The bootstrap installer lane: shell installer, dev-checkout wrapper,
+    # and the Tauri app's non-Rust sources.
+    "install.sh → bootstrap lane": (
+        ["scripts/install.sh"],
+        _lanes(python=True, bootstrap=True, python_prod=True),
+    ),
+    "setup-hermes.sh → bootstrap lane": (
+        ["setup-hermes.sh"],
+        _lanes(python=True, bootstrap=True, python_prod=True),
+    ),
+    "tauri installer source → bootstrap + rust": (
+        ["apps/bootstrap-installer/src-tauri/src/lib.rs"],
+        _lanes(frontend=True, bootstrap=True, rust=True),
     ),
     "composite action → ci_review (also fail-open all)": (
         [".github/actions/retry/action.yml"],
@@ -319,7 +319,7 @@ _REPO = Path(__file__).resolve().parents[2]
 
 
 def _yaml(rel: str) -> dict:
-    yaml = pytest.importorskip("yaml")
+    yaml = pytest.importorskip("hermes_yaml")
     return yaml.safe_load((_REPO / rel).read_text(encoding="utf-8"))
 
 
